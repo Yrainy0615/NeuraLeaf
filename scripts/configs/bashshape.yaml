@@ -8,26 +8,26 @@ Discriminator:
   IN_CHANNELS: 256
   IMG_CHANNELS: 1
 
+Decoder:
+
 Training:
+  batch_size: 64
+  num_epochs: 2000
+  vis_interval: 100
   data_dir: dataset/LeafData
-  LR_G: 0.001
+  n_sample: 5000
   LR_D: 0.001
   LR_LAT: 0.001
-  ckpt_interval: 1000
-  lr_decay_interval_lat: 1000
+  ckpt_interval: 500
+  lr_decay_interval_lat: 500
   lr_decay_factor_lat: 0.5
   START_TRAIN_AT_IMG_SIZE: 8
-  BATCH_SIZES: [256, 128, 64, 64,16,16]
-  save_result: results/fashion
-  checkpoint_path: checkpoints/baseshape
+  save_result: results/baseshape/sdf
+  checkpoint_path: checkpoints/baseshape/sdf
 
 
   lambdas:
-    dis_drift: 0.001
-    loss_D: 1
-    dis_gp: 10
-    loss_G: 1.0
-    lat_reg: 0.001
-    lat_nce: 1.0
-    loss_mse: 5
+    loss_mse: 1.0
+    lat_reg: 0.01
+
     
