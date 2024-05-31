@@ -7,3 +7,6 @@
 [submodule "submodule/controlnet"]
 	path = submodule/controlnet
 	url = https://github.com/lllyasviel/ControlNet.git
+[submodule "submodule/Palette"]
+	path = submodule/Palette
+	url = https://github.com/Janspiry/Palette-Image-to-Image-Diffusion-Models.git

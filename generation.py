@@ -3,11 +3,12 @@ import torch
 import argparse
 import yaml
 import os
-from scripts.models.decoder import MaskDecoder
+from scripts.models.decoder import SDFDecoder
+from scripts.utils.utils import latent_to_sdfimage
 
 def generate_baseshape(decoder, latent, save_folder): 
-    idx1 = 600
-    idx2= 700
+    idx1 = 120
+    idx2= 600
     latent_x = latent[idx1]
     latent_y = latent[idx2]
     save_name = os.path.join(save_folder, 'baseshape', f'inter_{idx1}_{idx2}.png')
@@ -15,8 +16,8 @@ def generate_baseshape(decoder, latent, save_folder):
     weights = torch.linspace(0, 1, 10).to(latent_x.device)
     latent = latent_x * weights[:, None] + latent_y * (1 - weights[:, None])
     with torch.no_grad():
-        img = decoder(latent)
-        grid = make_grid(img, nrow=5, normalize=True)
+        sdf_images = latent_to_sdfimage(latent, decoder=decoder, size=512)
+        grid = make_grid(sdf_images.unsqueeze(1), nrow=5)
         save_image(grid, save_name)
 
 
@@ -34,10 +35,10 @@ if __name__ == '__main__':
     CFG = yaml.safe_load(open(args.config, 'r')) 
     
     # load mask decoder
-    mask_decoder = MaskDecoder(latent_dim=256, img_channels=1, img_size=256)
+    mask_decoder = SDFDecoder()
     mask_decoder.eval()
     mask_decoder.to(device)
-    checkpoint_baseshape = torch.load('checkpoints/baseshape/epoch_800.pth')
+    checkpoint_baseshape = torch.load('checkpoints/baseshape/sdf/epoch_1000.pth',map_location='cpu')
     mask_decoder.load_state_dict(checkpoint_baseshape['decoder'])
     latent_shape =checkpoint_baseshape['latent_shape']['weight']
     
