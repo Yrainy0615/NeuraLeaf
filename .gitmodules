@@ -10,3 +10,6 @@
 [submodule "submodule/Palette"]
 	path = submodule/Palette
 	url = https://github.com/Janspiry/Palette-Image-to-Image-Diffusion-Models.git
+[submodule "submodule/pixel2pixel"]
+	path = submodule/pixel2pixel
+	url = https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix.git
