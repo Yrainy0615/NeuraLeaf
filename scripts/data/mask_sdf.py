@@ -3,7 +3,7 @@ import taichi as ti
 import pathlib
 import os
 import numpy as np
-ti.init(arch=ti.gpu, device_memory_GB=1.0, kernel_profiler=True, debug=True, print_ir=False)
+# ti.init(arch=ti.gpu, device_memory_GB=1.0, kernel_profiler=True, debug=True, print_ir=False)
 
 MAX_DIST = 2147483647
 null = ti.Vector([-1, -1, MAX_DIST])
@@ -289,3 +289,24 @@ if __name__ == "__main__":
                     np.save(os.path.join(save_dir, save_name), sdf)
                     print(f'{save_name} is saved')
                 # ti.kernel_profiler_print()
+
+
+def sdf_to_grayscale(sdf_img):
+    max_dist = 0.0
+    min_dist = 0.0
+    for i, j in ti.ndrange(sdf_img.shape[0], sdf_img.shape[1]):
+        max_dist = max(max_dist, sdf_img[i, j])
+        min_dist = min(min_dist, sdf_img[i, j])
+
+    for i, j in ti.ndrange(sdf_img.shape[0], sdf_img.shape[1]):
+
+        if sdf_img[i, j] >= 0:
+            # 正距离：映射到128-255
+            normalized_value = 128 + 127 * (sdf_img[i, j] / max_dist)
+            sdf_img[i, j] = normalized_value
+        else:
+            # 负距离：映射到0-127
+            normalized_value = 128 - 128 * (sdf_img[i, j] / min_dist)
+            sdf_img[i, j] = normalized_value
+
+    return sdf_img

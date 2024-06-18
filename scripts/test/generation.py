@@ -3,8 +3,13 @@ import torch
 import argparse
 import yaml
 import os
-from scripts.models.decoder import SDFDecoder
-from scripts.utils.utils import latent_to_sdfimage
+import sys
+sys.path.append('scripts')
+from models.decoder import SDFDecoder
+from utils.utils import latent_to_sdfimage
+from data.mask_sdf import sdf_to_grayscale
+from matplotlib import pyplot as plt
+import numpy as np
 
 def generate_baseshape(decoder, latent, save_folder): 
     idx1 = 120
@@ -17,7 +22,16 @@ def generate_baseshape(decoder, latent, save_folder):
     latent = latent_x * weights[:, None] + latent_y * (1 - weights[:, None])
     with torch.no_grad():
         sdf_images = latent_to_sdfimage(latent, decoder=decoder, size=512)
+        masks = sdf_images <=   0.01
+        masks = masks.float()   
+        grid_mask = make_grid(masks.unsqueeze(1), nrow=5)
         grid = make_grid(sdf_images.unsqueeze(1), nrow=5)
+        mask_name = save_name.replace('.png', '_mask.png')
+        sdf_vis = sdf_to_grayscale(sdf_images[9].cpu().numpy())
+        plt.imsave('vis.png', sdf_vis)
+        # expand to 3 channels np img
+        
+        save_image(grid_mask, mask_name)
         save_image(grid, save_name)
 
 
