@@ -21,8 +21,8 @@ def latent_to_mask(latent, decoder, size,k=None):
     glob_cond = torch.cat([latent.unsqueeze(1).expand(-1, xy.shape[1], -1), xy], dim=2)
     sdf = decoder(glob_cond)
     sdf_2d = sdf.view(latent.shape[0], size, size)
-    mask = sdf_to_mask(sdf_2d, k)
-    # mask = torch.nn.Hardsigmoid()(sdf_2d*k)
+    # mask = sdf_to_mask(sdf_2d, k)
+    mask = torch.nn.Hardsigmoid()(sdf_2d*k)
     return 1-mask
 
 

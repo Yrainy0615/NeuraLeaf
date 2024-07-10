@@ -78,7 +78,7 @@ if __name__ == '__main__':
     mask_decoder = SDFDecoder()
     mask_decoder.eval()
     mask_decoder.to(device)
-    checkpoint_baseshape = torch.load('checkpoints/baseshape/latest.pth',map_location='cpu')
+    checkpoint_baseshape = torch.load('checkpoints/baseshape/sdf/epoch_450_hardsigmoid.pth',map_location='cpu')
     mask_decoder.load_state_dict(checkpoint_baseshape['decoder'])
     if 'k' in checkpoint_baseshape:
         k = checkpoint_baseshape['k']

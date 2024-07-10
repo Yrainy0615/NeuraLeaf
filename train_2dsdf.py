@@ -11,7 +11,7 @@ from tqdm import tqdm
 import math
 from scripts.models.decoder import SDFDecoder
 from torch.nn import functional as F
-
+from scripts.utils.utils import save_tensor_image
 
 
 class BaseTrainer(object):
@@ -25,7 +25,7 @@ class BaseTrainer(object):
         self.dataset = BaseShapeDataset(self.cfg['data_dir'], self.cfg['n_sample'])
         self.dataloader = self.dataset.get_loader(batch_size=self.cfg['batch_size'], shuffle=True)
         self.latent_shape = torch.nn.Embedding(len(self.dataset), cfg['Generator']['Z_DIM'], max_norm=1, device=device)
-        self.k = torch.nn.Parameter(torch.tensor(5.0)).requires_grad_(True)
+        self.k = torch.nn.Parameter(torch.tensor(1.0)).requires_grad_(True)
         self.optim_decoder = optim.Adam(self.decoder.parameters(), lr=self.cfg['LR_D'], betas=(0.0, 0.999))
         # self.optim_k = optim.Adam([self.k], lr=self.cfg['LR_D'], betas=(0.0, 0.999))
         torch.nn.init.normal_(self.latent_shape.weight.data, 0.0, 0.1/math.sqrt(cfg['Generator']['Z_DIM']))
@@ -86,7 +86,7 @@ class BaseTrainer(object):
             sum_loss_dict.update({'loss':0.0})
             for batch in self.dataloader:
 
-                loss_dict = self.train_step_shape(batch)
+                loss_dict, mask_gt = self.train_step_shape(batch)
 
                 loss_values = {key: value.item() if torch.is_tensor(value) else value for key, value in loss_dict.items()}    
             if self.args.use_wandb:
@@ -95,6 +95,7 @@ class BaseTrainer(object):
                 sum_loss_dict[k] += loss_dict[k]
             if epoch % vis_interval == 0:
                 self.generate_examples(epoch, n=20)
+                save_tensor_image(mask_gt, os.path.join(self.cfg['save_result'], f'mask_gt_{epoch}.png'))
             if epoch % ckpt_interval == 0 and epoch > 0:
                 self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=f'epoch_{epoch}_{save_name}.pth')
             # print result
@@ -138,7 +139,7 @@ class BaseTrainer(object):
         self.optim_latent.step() 
         self.optim_k.step()     
         loss_dict.update({'loss': loss_total.item()})
-        return loss_dict
+        return loss_dict, mask_gt
     
     def eval(self, decoder,latent_shape):
         for batch in self.dataloader:

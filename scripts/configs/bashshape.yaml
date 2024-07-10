@@ -11,15 +11,15 @@ Discriminator:
 Decoder:
 
 Training:
-  batch_size: 16
+  batch_size: 8
   num_epochs: 500
-  vis_interval: 10
+  vis_interval: 50
   data_dir: dataset/LeafData
   n_sample: 5000
   LR_D: 0.001
   LR_LAT: 0.001
   ckpt_interval: 100
-  lr_decay_interval_lat: 50
+  lr_decay_interval_lat: 100
   lr_decay_factor_lat: 0.5
   START_TRAIN_AT_IMG_SIZE: 8
   save_result: results/baseshape/sdf
