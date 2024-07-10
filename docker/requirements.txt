@@ -23,3 +23,4 @@ safetensors==0.2.7
 basicsr==1.4.2
 taichi==1.7.1
 wandb==0.17.2
+trimesh==4.4.1

@@ -2,10 +2,17 @@ from torch.utils.data import Dataset, DataLoader
 import cv2
 import os
 from math import log2
+from torchvision.utils import make_grid, save_image
 from torchvision import transforms
 from PIL import Image
 import torchvision
+import torch
 import numpy as np
+# from utils.utils import sdf_to_mask 
+
+def sdf_to_mask(sdf:torch.Tensor,k:float=1):
+    mask = 1/ (1+torch.exp(-k*sdf))
+    return mask
 
 class BaseShapeDataset(Dataset):
     def __init__(self, data_dir,n_sample):
@@ -43,7 +50,7 @@ class BaseShapeDataset(Dataset):
     
     def __getitem__(self, idx):
         mask = cv2.imread(self.masks[idx])
-        mask = cv2.resize(mask, (512, 512))        
+        mask = cv2.resize(mask, (128, 128))        
         mask = mask.astype(np.float32)  / 255
         
         image = cv2.imread(self.images[idx])
@@ -67,6 +74,7 @@ class BaseShapeDataset(Dataset):
             'jpg': image,
             'label': label_index,
             'idx': idx,
+            'sdf_2d': sdf,
             'sdf': sdf_sample,
             'sdf_img': sdf_img,
             'points': pts_sample,
@@ -95,7 +103,15 @@ class IndexedFashionMNIST(torchvision.datasets.FashionMNIST):
 
 if __name__ == '__main__':
     dataset = BaseShapeDataset('dataset/LeafData', n_sample=1000)
-    dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=1, shuffle=True)
     for i, data in enumerate(dataloader):
-        print(i, data['mask'].shape, data['label'])
+        sdf = data['sdf_2d']  # (-1,1)
+        mask = data['hint']
+        mask_rec = sdf_to_mask(sdf,k=50)  #(0,1)
+
+        # create a fig show mask and mask_rec
+        grid = make_grid([mask_rec,mask[:,:,:,0]],nrow=1)
+        save_image(grid,'test.png')
+        
+        # print(i, data['mask'].shape, data['label'])
         

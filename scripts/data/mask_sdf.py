@@ -3,6 +3,7 @@ import taichi as ti
 import pathlib
 import os
 import numpy as np
+import torch
 # ti.init(arch=ti.gpu, device_memory_GB=1.0, kernel_profiler=True, debug=True, print_ir=False)
 
 MAX_DIST = 2147483647
@@ -292,21 +293,22 @@ if __name__ == "__main__":
 
 
 def sdf_to_grayscale(sdf_img):
-    max_dist = 0.0
-    min_dist = 0.0
-    for i, j in ti.ndrange(sdf_img.shape[0], sdf_img.shape[1]):
-        max_dist = max(max_dist, sdf_img[i, j])
-        min_dist = min(min_dist, sdf_img[i, j])
+    max_dist = torch.max(sdf_img)
+    min_dist = torch.min(sdf_img)
 
-    for i, j in ti.ndrange(sdf_img.shape[0], sdf_img.shape[1]):
+    # 创建一个新的数组来存储归一化的灰度值
+    grayscale_img = torch.zeros_like(sdf_img)
 
-        if sdf_img[i, j] >= 0:
-            # 正距离：映射到128-255
-            normalized_value = 128 + 127 * (sdf_img[i, j] / max_dist)
-            sdf_img[i, j] = normalized_value
-        else:
-            # 负距离：映射到0-127
-            normalized_value = 128 - 128 * (sdf_img[i, j] / min_dist)
-            sdf_img[i, j] = normalized_value
+    # 计算正距离和负距离的归一化灰度值
+    positive_mask = sdf_img >= 0
+    negative_mask = ~positive_mask
 
-    return sdf_img
+    # 正距离：映射到128-255
+    if max_dist > 0:
+        grayscale_img[positive_mask] = 128 + (127 * (sdf_img[positive_mask] / max_dist))
+
+    # 负距离：映射到0-127
+    if min_dist < 0:
+        grayscale_img[negative_mask] = 128 - (128 * (sdf_img[negative_mask] / -min_dist))
+
+    return grayscale_img
