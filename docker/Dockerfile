@@ -7,7 +7,7 @@ RUN ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
 RUN groupadd -g "${GROUP_ID}" "${USER_NAME}" && useradd -u "${USER_ID}" -m "${USER_NAME}" -g "${USER_NAME}"
 RUN echo "${USER_NAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y libopencv-dev screen git python3.8 python3.8-distutils python3-pip
+# Get the basic Linux packages upgraded and get the development tools setup
 RUN apt-get update \
     && apt-get upgrade -y\
     && apt-get install -y wget \
@@ -40,17 +40,6 @@ RUN conda install -c conda-forge jupyterlab \
     && conda install nodejs \
     && conda install -c defaults -c conda-forge ipympl
 
-# Conda upgrade --all likes to downgrade our numpy install from 1.22 to 1.21
-# Because the included PyTorch requires 1.22 to be present to work properly, we need to just force
-# reinstall to get 1.22
-RUN pip install --force-reinstall numpy==1.22.2
-
-# TODO: Find fix for tensorboard not working on Jupyter Lab 3.x
-RUN jupyter labextension update --all \
-    && jupyter labextension install @jupyter-widgets/jupyterlab-manager \
-    && jupyter labextension install jupyter-matplotlib \
-    && jupyter nbextension enable --py widgetsnbextension \
-    && jupyter lab build
 
 RUN conda install -c conda-forge pyvista \
     && conda install -c conda-forge ipyvtklink
