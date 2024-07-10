@@ -3,6 +3,8 @@ import trimesh
 import numpy as np
 from data_utils import data_processor
 import cv2
+from pytorch3d.io import load_ply
+from pytorch3d.structures import Meshes
 
 class MeshProcessor(data_processor):
     def __init__(self, root_dir):
@@ -22,6 +24,12 @@ class MeshProcessor(data_processor):
         texture = trimesh.visual.TextureVisuals(uv=uvs, image=texture_image)
         mesh.visual = texture
         return mesh
+    
+    def find_paired_deformed_mesh(self,baseshape,num=3):
+        base = load_ply(baseshape)
+        
+        pass
+        
 
 
 
@@ -31,6 +39,10 @@ if __name__ == "__main__":
     # test uv mapping 
     mesh = trimesh.load(processor.all_base_mesh[0])
     texture = cv2.imread(processor.all_rgb[0])
-    textured_mesh = processor.uv_mapping(mesh, texture)
+    # textured_mesh = processor.uv_mapping(mesh, texture)
+    # get base-deform pair
+    for i in range(len(processor.all_base_mesh)):
+        processor.find_paired_deformed_mesh(processor.all_base_mesh[i])
+        
     pass
         
