@@ -7,7 +7,11 @@ from pytorch3d.io import load_ply
 from pytorch3d.structures import Meshes
 from pytorch3d.loss import chamfer_distance
 import torch
+<<<<<<< HEAD
 from probreg import cpd
+=======
+from proberg import cpd
+>>>>>>> d00dc53bdd38eba854feae101c2eee9c2a283e98
 import cupy as cp
 
 class MeshProcessor(data_processor):
@@ -31,7 +35,11 @@ class MeshProcessor(data_processor):
     
     def find_paired_deformed_mesh(self,baseshape,num=3):
         base = load_ply(baseshape)
+<<<<<<< HEAD
         base_points = base[0]
+=======
+        base_points = base.verts_packed()   
+>>>>>>> d00dc53bdd38eba854feae101c2eee9c2a283e98
         chamfer_list = []
         for i, deformed in enumerate(self.all_deformed_mesh):
             deformed_points = deformed.verts_packed()
@@ -72,6 +80,10 @@ if __name__ == "__main__":
         for j in shape_idx:
             deformed = load_ply(processor.all_deformed_mesh[j])
             registrated_mesh = processor.nonrigid_cpd_cuda(base, deformed)
+<<<<<<< HEAD
+=======
+            
+>>>>>>> d00dc53bdd38eba854feae101c2eee9c2a283e98
         
         
     pass
