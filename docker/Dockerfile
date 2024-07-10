@@ -24,23 +24,9 @@ RUN apt-get update \
     && conda upgrade --all -y
 
 COPY ./requirements.txt ./tmp/
-
+RUN conda activate pytorch3d
+RUN conda install pytorch=1.13.0 torchvision pytorch-cuda=11.6 -c pytorch -c nvidia
+RUN conda install -c fvcore -c iopath -c conda-forge fvcore iopath
 RUN python3.8 -m pip install -U pip wheel setuptools
 RUN python3.8 -m pip install -r ./tmp/requirements.txt
-# RUN python3.8 -m pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
-# Install PyTorch3D and it's dependencies via Conda
-RUN conda install -c fvcore -c iopath -c conda-forge fvcore iopath \
-    && conda install pytorch3d -c pytorch3d
-    # && git clone https://github.com/facebookresearch/pytorch3d.git \
-    # && cd pytorch3d \
-    # && pip install -e .
-
-# Some of our code is using older Jupyter Notebook tooling
-# this doesn't work well with some Jupyter Lab bits
-RUN conda install -c conda-forge jupyterlab \
-    && conda install nodejs \
-    && conda install -c defaults -c conda-forge ipympl
-
-
-RUN conda install -c conda-forge pyvista \
-    && conda install -c conda-forge ipyvtklink
+RUN conda install pytorch3d -c pytorch3d
