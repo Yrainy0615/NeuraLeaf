@@ -1,5 +1,5 @@
-FROM nvcr.io/nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu20.04
-
+# FROM nvcr.io/nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu20.04
+FROM nvcr.io/nvidia/pytorch:22.02-py3
 ARG USER_ID=1130
 ARG GROUP_ID=300
 ARG USER_NAME="yyang"
