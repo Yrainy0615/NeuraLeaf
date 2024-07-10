@@ -25,7 +25,7 @@ RUN apt-get update \
 
 COPY ./requirements.txt ./tmp/
 RUN conda create -n neuraleaf python=3.9
-RUN conda activate pytorch3d
+RUN conda activate neuraleaf
 RUN conda install pytorch=1.13.0 torchvision pytorch-cuda=11.6 -c pytorch -c nvidia
 RUN conda install -c fvcore -c iopath -c conda-forge fvcore iopath
 RUN python3.8 -m pip install -U pip wheel setuptools
