@@ -1,5 +1,5 @@
-# FROM nvcr.io/nvidia/cuda:11.3.1-cudnn8-runtime-ubuntu20.04
-FROM nvcr.io/nvidia/pytorch:22.02-py3
+FROM nvcr.io/nvidia/cuda:11.6.1-cudnn8-runtime-ubuntu20.04
+# FROM nvcr.io/nvidia/pytorch:22.02-py3
 ARG USER_ID=1130
 ARG GROUP_ID=300
 ARG USER_NAME="yyang"
@@ -20,14 +20,30 @@ RUN apt-get update \
     libgles2-mesa-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
-    && gcc --version \
-    && conda upgrade --all -y
+    && gcc --version 
 
+# install and setup conda
+RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh \
+    && bash ~/miniconda.sh -b -p /opt/miniconda \
+    && rm ~/miniconda.sh
+ENV PATH="/opt/miniconda/bin:$PATH"
+
+# create conda environment
+RUN conda init bash \
+    && conda create -n neuraleaf python=3.9 -y \
+    && echo "conda activate neuraleaf" >> ~/.bashrc
+# install pytorch3d by conda
 COPY ./requirements.txt ./tmp/
-RUN conda create -n neuraleaf python=3.9
-RUN conda activate pytorch3d
-RUN conda install pytorch=1.13.0 torchvision pytorch-cuda=11.6 -c pytorch -c nvidia
-RUN conda install -c fvcore -c iopath -c conda-forge fvcore iopath
-RUN python3.8 -m pip install -U pip wheel setuptools
-RUN python3.8 -m pip install -r ./tmp/requirements.txt
-RUN conda install pytorch3d -c pytorch3d
+RUN /bin/bash -c ". activate neuraleaf && \
+    conda install pytorch=1.13.0 torchvision pytorch-cuda=11.6 -c pytorch -c nvidia -y && \
+    conda install -c fvcore -c iopath -c conda-forge fvcore iopath -y  && \
+    conda install -c conda-forge cupy  && \
+    conda install pytorch3d -c pytorch3d && \
+    pip install -r ./tmp/requirements.txt  && \
+    python3 -m pip install --upgrade meshlib "
+
+
+
+
+# RUN python3.8 -m pip install -U pip wheel setuptools
+

@@ -95,7 +95,7 @@ class BaseTrainer(object):
                 sum_loss_dict[k] += loss_dict[k]
             if epoch % vis_interval == 0:
                 self.generate_examples(epoch, n=20)
-                save_tensor_image(mask_gt, os.path.join(self.cfg['save_result'], f'mask_gt_{epoch}.png'))
+                save_tensor_image(mask_gt.permute(0,3,1,2), os.path.join(self.cfg['save_result'], f'mask_gt_{epoch}.png'))
             if epoch % ckpt_interval == 0 and epoch > 0:
                 self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=f'epoch_{epoch}_{save_name}.pth')
             # print result
