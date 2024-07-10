@@ -34,7 +34,6 @@ RUN conda init bash \
     && echo "conda activate neuraleaf" >> ~/.bashrc
 # install pytorch3d by conda
 COPY ./requirements.txt ./tmp/
-<<<<<<< HEAD
 RUN /bin/bash -c ". activate neuraleaf && \
     conda install pytorch=1.13.0 torchvision pytorch-cuda=11.6 -c pytorch -c nvidia -y && \
     conda install -c fvcore -c iopath -c conda-forge fvcore iopath -y  && \
@@ -45,12 +44,6 @@ RUN /bin/bash -c ". activate neuraleaf && \
 
 
 
-=======
-RUN conda run -n neuraleaf conda install pytorch=1.13.0 torchvision pytorch-cuda=11.6 -c pytorch -c nvidia -y && \
-    conda run -n neuraleaf conda install -c fvcore -c iopath -c conda-forge fvcore iopath -y && \
-    conda run -n neuraleaf conda install -c pytorch3d pytorch3d -y && \
-    conda run -n neuraleaf pip install -r ./tmp/requirements.txt
->>>>>>> d00dc53bdd38eba854feae101c2eee9c2a283e98
 
 # RUN python3.8 -m pip install -U pip wheel setuptools
 

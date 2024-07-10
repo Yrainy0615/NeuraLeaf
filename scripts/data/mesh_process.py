@@ -35,11 +35,7 @@ class MeshProcessor(data_processor):
     
     def find_paired_deformed_mesh(self,baseshape,num=3):
         base = load_ply(baseshape)
-<<<<<<< HEAD
         base_points = base[0]
-=======
-        base_points = base.verts_packed()   
->>>>>>> d00dc53bdd38eba854feae101c2eee9c2a283e98
         chamfer_list = []
         for i, deformed in enumerate(self.all_deformed_mesh):
             deformed_points = deformed.verts_packed()
