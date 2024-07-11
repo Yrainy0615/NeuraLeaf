@@ -14,7 +14,7 @@ class data_processor():
         self.all_sdf = []
         self.all_base_mesh = []
         self.all_deformed_mesh = None
-        for root, dirs, files in os.walk(root_dir):
+        for root, dirs, files in os.walk(os.path.join(root_dir,'LeafData')):
             for file in files:
                 if file.endswith('.npy'):
                     self.all_sdf.append(os.path.join(root, file))

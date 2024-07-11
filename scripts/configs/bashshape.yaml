@@ -1,8 +1,12 @@
-Generator:
+Base:
   Z_DIM: 256
   W_DIM: 256
   IN_CHANNELS: 256
   IMG_CHANNELS: 1
+  decoder_lat_dim: 712
+  decoder_hidden_dim: 1024
+  decoder_nlayers: 8
+  decoder_out_dim: 1
 
 Discriminator:
   IN_CHANNELS: 256
@@ -11,25 +15,29 @@ Discriminator:
 Decoder:
 
 Training:
-  batch_size: 16
-  num_epochs: 500
+  batch_size: 32
+  num_epochs: 3000
   vis_interval: 50
   data_dir: dataset/LeafData
   n_sample: 5000
   LR_D: 0.001
   LR_LAT: 0.001
-  ckpt_interval: 100
-  lr_decay_interval_lat: 100
+  ckpt_interval: 300
+  lr_decay_interval_lat: 300
   lr_decay_factor_lat: 0.5
   START_TRAIN_AT_IMG_SIZE: 8
   save_result: results/baseshape/sdf
   checkpoint_path: checkpoints/baseshape/sdf
-  save_name: hardsigmoid
+  save_name: hardsigmoid_new
 
 
   lambdas:
     loss_mse: 1.0
     lat_reg: 0.01
-    loss_mask: 10
+    loss_mask: 1
 
-    
+Deform:
+  decoder_lat_dim: 712
+  decoder_hidden_dim: 1024
+  decoder_nlayers: 8
+  decoder_out_dim: 3

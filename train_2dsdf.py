@@ -9,7 +9,7 @@ from torchvision.utils import save_image, make_grid
 from scripts.utils.utils import latent_to_mask
 from tqdm import tqdm
 import math
-from scripts.models.decoder import SDFDecoder
+from scripts.models.decoder import SDFDecoder, UDFNetwork
 from torch.nn import functional as F
 from scripts.utils.utils import save_tensor_image
 
@@ -24,11 +24,11 @@ class BaseTrainer(object):
         self.device = device
         self.dataset = BaseShapeDataset(self.cfg['data_dir'], self.cfg['n_sample'])
         self.dataloader = self.dataset.get_loader(batch_size=self.cfg['batch_size'], shuffle=True)
-        self.latent_shape = torch.nn.Embedding(len(self.dataset), cfg['Generator']['Z_DIM'], max_norm=1, device=device)
+        self.latent_shape = torch.nn.Embedding(len(self.dataset), cfg['Base']['Z_DIM'], max_norm=1, device=device)
         self.k = torch.nn.Parameter(torch.tensor(1.0)).requires_grad_(True)
         self.optim_decoder = optim.Adam(self.decoder.parameters(), lr=self.cfg['LR_D'], betas=(0.0, 0.999))
         # self.optim_k = optim.Adam([self.k], lr=self.cfg['LR_D'], betas=(0.0, 0.999))
-        torch.nn.init.normal_(self.latent_shape.weight.data, 0.0, 0.1/math.sqrt(cfg['Generator']['Z_DIM']))
+        torch.nn.init.normal_(self.latent_shape.weight.data, 0.0, 0.1/math.sqrt(cfg['Base']['Z_DIM']))
         self.optim_latent = optim.Adam(self.latent_shape.parameters(), lr=self.cfg['LR_LAT'], betas=(0.0, 0.999))
         self.optim_k = optim.Adam([self.k], lr=0.01, betas=(0.0, 0.999))
         
@@ -60,7 +60,7 @@ class BaseTrainer(object):
         self.decoder.eval()
         random_index = torch.randint(0, len(self.dataset), (n,), device=self.device)
         random_latent = self.latent_shape(random_index)
-        masks = latent_to_mask(random_latent, decoder=self.decoder, size=256, k = self.k)
+        masks = latent_to_mask(random_latent, decoder=self.decoder, size=128, k = self.k)
         grid = make_grid(masks, nrow=2)
         save_folder = f"{self.cfg['save_result']}/"
         if not os.path.exists(save_folder):
@@ -94,7 +94,7 @@ class BaseTrainer(object):
             for k in loss_dict:
                 sum_loss_dict[k] += loss_dict[k]
             if epoch % vis_interval == 0:
-                self.generate_examples(epoch, n=20)
+                self.generate_examples(epoch, n=4)
                 save_tensor_image(mask_gt.permute(0,3,1,2), os.path.join(self.cfg['save_result'], f'mask_gt_{epoch}.png'))
             if epoch % ckpt_interval == 0 and epoch > 0:
                 self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=f'epoch_{epoch}_{save_name}.pth')
@@ -193,7 +193,13 @@ if __name__ == '__main__':
         wandb.config.update(CFG)
     
     # load decoder
-    decoder = SDFDecoder()
+    # decoder = SDFDecoder()
+    decoder = UDFNetwork(d_in=CFG['Base']['Z_DIM'],
+                         d_hidden=CFG['Base']['decoder_hidden_dim'],
+                         d_out=CFG['Base']['decoder_out_dim'],
+                         n_layers=CFG['Base']['decoder_nlayers'],
+                         udf_type='sdf',
+                         geometric_init=False) 
     
     # load trainer
     trainer = BaseTrainer(decoder, CFG, device,args)

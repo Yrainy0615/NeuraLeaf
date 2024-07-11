@@ -1,4 +1,3 @@
-from torchvision.utils import save_image, make_grid
 import torch
 import argparse
 import yaml
@@ -7,8 +6,8 @@ import sys
 import torchvision.transforms as transforms
 # sys.path.append('scripts')
 from scripts.data.dataset import BaseShapeDataset
-from scripts.models.decoder import SDFDecoder
-from scripts.utils.utils import latent_to_mask, save_tensor_image
+from scripts.models.decoder import SDFDecoder, UDFNetwork
+from scripts.utils.utils import latent_to_mask, save_tensor_image, deform_mesh, mask_to_mesh,  denormalize
 from matplotlib import pyplot as plt
 import numpy as np
 from submodule.pixel2pixel.models import create_model
@@ -19,8 +18,8 @@ def generate_baseshape(decoder, latent, dataset,save_folder,mask_transform,k,sav
     """
     shape latent -> 2D SDF -> binary mask 
     """
-    idx1 = 120
-    idx2= 500
+    idx1 = 106
+    idx2= 579
     masks1, mask2 = dataset[idx1]['hint'], dataset[idx2]['hint']
     masks_gt = torch.stack([torch.tensor(masks1), torch.tensor(mask2)], dim=0)
     masks_gt = masks_gt.permute(0, 3, 1, 2)
@@ -30,11 +29,13 @@ def generate_baseshape(decoder, latent, dataset,save_folder,mask_transform,k,sav
     latent_y = latent[idx2]
     save_name = os.path.join(save_folder, f'inter_{idx1}_{idx2}.png')
     # linear interpolation
-    weights = torch.linspace(0, 1, 2).to(latent_x.device)
+    weights = torch.linspace(0, 1, 10).to(latent_x.device)
     latent = latent_x * (1-weights[:, None]) + latent_y * weights[:, None]
     with torch.no_grad():
         masks = latent_to_mask(latent.to('cuda'), decoder=decoder, k=k,size=256)
         masks = masks.unsqueeze(1)
+        # binary masks to 0 & 1
+        masks = torch.round(masks)
         masks = masks.repeat(1, 3, 1, 1)
         masks = mask_transform(masks)
 
@@ -50,7 +51,7 @@ def generate_texture(model_texture,masks:torch.tensor,  save_folder, save_image=
     """
 
     texture  = model_texture.netG(masks)
-    texture = (texture + 1) / 2
+    texture = (texture+1)/2
     if save_image:
         save_tensor_image(texture, os.path.join(save_folder, 'texture.png'))
     return texture
@@ -78,7 +79,7 @@ if __name__ == '__main__':
     mask_decoder = SDFDecoder()
     mask_decoder.eval()
     mask_decoder.to(device)
-    checkpoint_baseshape = torch.load('checkpoints/baseshape/sdf/epoch_450_hardsigmoid.pth',map_location='cpu')
+    checkpoint_baseshape = torch.load('checkpoints/baseshape/sdf/latest_sdfdecoder_hardsigmoid.pth',map_location='cpu')
     mask_decoder.load_state_dict(checkpoint_baseshape['decoder'])
     if 'k' in checkpoint_baseshape:
         k = checkpoint_baseshape['k']
@@ -88,7 +89,6 @@ if __name__ == '__main__':
     
     # baseshape generation 
     masks, masks_gt = generate_baseshape(mask_decoder, latent_shape, dataset,'./', mask_transform, k, save_image=True)
-    
     # texture generation  
     opt_texture = TestOptions().parse()
     opt_texture.gpu_ids = [args.gpu]
@@ -96,9 +96,22 @@ if __name__ == '__main__':
     model_texture.setup(opt_texture)
     model_texture.eval()
     texture = generate_texture(model_texture, masks, './', save_image=True)
-
     
-    pass
+    # base mesh with texture
+    base_mesh = mask_to_mesh(masks)
+
+    # deformation generation
+    checkpoint_deform = torch.load('checkpoints/deformation/eccv/deform.tar')
+    decoder_def = UDFNetwork(d_in=CFG['Deform']['decoder_lat_dim'],
+                         d_hidden=CFG['Deform']['decoder_hidden_dim'],
+                         d_out=CFG['Deform']['decoder_out_dim'],
+                         n_layers=CFG['Deform']['decoder_nlayers'],
+                         udf_type='sdf',
+                         geometric_init=False)
+    decoder_def.load_state_dict(checkpoint_deform['decoder_state_dict'])
+    lat_def_all = checkpoint_deform['latent_deform_state_dict']['weight']
+    
+    
     
     
     
