@@ -158,3 +158,6 @@ cython_debug/
 /temp
 /image_log
 /lightning_logs
+.obj
+.ply 
+.mtl
