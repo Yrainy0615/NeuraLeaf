@@ -7,9 +7,10 @@ import torchvision.transforms as transforms
 # sys.path.append('scripts')
 from scripts.data.dataset import BaseShapeDataset
 from scripts.models.decoder import SDFDecoder, UDFNetwork
-from scripts.utils.utils import latent_to_mask, save_tensor_image, deform_mesh, mask_to_mesh,  denormalize
+from scripts.utils.utils import latent_to_mask, save_tensor_image, deform_mesh, mask_to_mesh
 from matplotlib import pyplot as plt
 import numpy as np
+from scripts.data.mesh_process import MeshProcessor
 from submodule.pixel2pixel.models import create_model
 from submodule.pixel2pixel.options.test_options import TestOptions
 from torchvision.transforms import Resize
@@ -60,7 +61,7 @@ def generate_texture(model_texture,masks:torch.tensor,  save_folder, save_image=
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='RUN Leaf NPM')
-    parser.add_argument('--gpu', type=int, default=2, help='gpu index')
+    parser.add_argument('--gpu', type=int, default=0, help='gpu index')
     parser.add_argument('--save_folder', type=str, default='results', help='output directory')
     parser.add_argument('--config', type=str, default='scripts/configs/bashshape.yaml', help='config file')
     
@@ -71,6 +72,7 @@ if __name__ == '__main__':
     CFG = yaml.safe_load(open(args.config, 'r')) 
     mask_transform =  transforms.Compose([transforms.Normalize((0.5,), (0.5,),(0.5,)),
                                         transforms.Resize((256, 256)),])
+    meshprocessor = MeshProcessor('dataset')
     
     # load dataset
     dataset = BaseShapeDataset(CFG['Training']['data_dir'], CFG['Training']['n_sample'])
@@ -88,17 +90,20 @@ if __name__ == '__main__':
     latent_shape =checkpoint_baseshape['latent_shape']['weight']
     
     # baseshape generation 
-    masks, masks_gt = generate_baseshape(mask_decoder, latent_shape, dataset,'./', mask_transform, k, save_image=True)
+    masks, masks_gt = generate_baseshape(mask_decoder, latent_shape, dataset,'./', mask_transform, k, save_image=False)
     # texture generation  
     opt_texture = TestOptions().parse()
     opt_texture.gpu_ids = [args.gpu]
     model_texture = create_model(opt_texture)
     model_texture.setup(opt_texture)
     model_texture.eval()
-    texture = generate_texture(model_texture, masks, './', save_image=True)
+    texture = generate_texture(model_texture, masks, './', save_image=False)
     
     # base mesh with texture
-    base_mesh = mask_to_mesh(masks)
+    base_mesh = mask_to_mesh(masks) # return pytorch3d mesh
+    
+    # uv mapping 
+    textured_base_mesh = meshprocessor.uv_mapping(base_mesh, texture)
 
     # deformation generation
     checkpoint_deform = torch.load('checkpoints/deformation/eccv/deform.tar')

@@ -3,11 +3,13 @@ import numpy as np
 from matplotlib import pyplot as plt
 import trimesh
 import cv2
-import meshlib.mrmeshpy as mrmeshpy
-import meshlib.mrmeshnumpy as mrmeshnumpy
+import meshlib.mrmeshpy as mm
+import meshlib.mrmeshnumpy as mn
 import numpy as np
 import math
 from torchvision.utils import make_grid, save_image
+from pytorch3d.structures import Meshes
+from pytorch3d.io import IO
  
 
 def tensor2im(input_image, imtype=np.uint8):
@@ -50,17 +52,36 @@ def sdf_to_mask(sdf:torch.Tensor,k:float=1):
     return mask
 
 
-def mask_to_mesh(mask_file:str):
-    dm = mrmeshpy.loadDistanceMapFromImage(mrmeshpy.Path(mask_file), 0)
-    # find the boundary contour between black and white:
-    polyline2 = mrmeshpy.distanceMapTo2DIsoPolyline(dm, isoValue=127)
-    holes_vert_ids = mrmeshpy.HolesVertIds()
-    contours = polyline2.contours2(holes_vert_ids)
+def mask_to_mesh(masks:torch.tensor, save_mesh=False):
+    # list for store pytorch3d meshes
+    verts_list = []
+    faces_list = []
+    if masks.dim() == 4:
+        for mask in masks:
+            mask = (mask+1)
+            mask = mask[0]
+            mask_numpy = mask.cpu().numpy()
+            y, x = np.nonzero(mask_numpy > 0)
+            y_uv = y / mask_numpy.shape[0]
+            x_uv = x / mask_numpy.shape[1]
+            z = np.zeros_like(x)
+            verts = np.stack([x_uv, y_uv, z],axis=-1).reshape(-1,3)
+            pc = mn.pointCloudFromPoints(verts)
+            pc.validPoints = mm.pointUniformSampling(pc, 1e-3)
+            mesh = mm.triangulatePointCloud(pc)
+            # mesh = mm.offsetMesh(mesh, 0.0)
+            out_faces = mn.getNumpyFaces(mesh.topology)
+            verts_list.append(verts)
+            faces_list.append(out_faces)
+        mesh_pytorch3d = Meshes(verts=[torch.tensor(verts).float() for verts in verts_list], faces=[torch.tensor(faces).long() for faces in faces_list])
+        mesh_pytorch3d = mesh_pytorch3d.to(masks.device)
+        # save one mesh for test 
+        mesh1 = mesh_pytorch3d[0]
+        if save_mesh:
+            IO().save_mesh(mesh1, "mesh1.obj")
+        return mesh_pytorch3d
+        
 
-    # compute the triangulation inside the contour
-    mesh = mrmeshpy.triangulateContours(contours)
-    mrmeshpy.subdivideMesh(mesh)
-    return mesh
 
 def save_tensor_image(tensor,path):
     grid  = make_grid(tensor, n_row=int(math.sqrt(tensor.shape[0])))

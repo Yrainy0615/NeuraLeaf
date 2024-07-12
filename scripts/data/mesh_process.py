@@ -1,14 +1,19 @@
 import os
 import trimesh
 import numpy as np
-from data_utils import data_processor
+from scripts.data.data_utils import data_processor
 import cv2
-from pytorch3d.io import load_ply, load_obj, save_ply
+from pytorch3d.io import load_ply, load_obj, save_ply, IO, save_obj
 from pytorch3d.structures import Meshes
 from pytorch3d.loss import chamfer_distance
 import torch
 from probreg import cpd
 from pytorch3d.transforms import RotateAxisAngle, Translate, Scale
+from pytorch3d.structures import Meshes
+from pytorch3d.renderer import Textures
+from scripts.utils.utils import save_tensor_image
+
+
 
 class MeshProcessor(data_processor):
     def __init__(self, root_dir):
@@ -27,18 +32,36 @@ class MeshProcessor(data_processor):
 
         return normalized_verts
     
-    def uv_mapping(self,mesh, texture_image):
-        uvs = np.zeros((mesh.vertices.shape[0], 2), dtype=np.float32)
-        texture_height, texture_width, _ = texture_image.shape
+    def uv_mapping(self,meshes:Meshes, texture_image:torch.tensor):
+        texture_lsit = []
+        for i in range(len(meshes)):
+            mesh = meshes[i]
+            texture_img = texture_image[i]
+            verts= mesh.verts_packed()
+            uvs = torch.zeros((verts.shape[0], 2), dtype=torch.float32,device=texture_img.device)
+            texture_height, texture_width = texture_img[i].shape[:2]
+            for i, (x, y, _) in enumerate(verts):
+                u = torch.clamp(x, 0, texture_width - 1) 
+                v = torch.clamp(y, 0, texture_height - 1) 
+                uvs[i] = torch.tensor([u, 1 - v])
+            texture = Textures(verts_uvs=[uvs], faces_uvs=[mesh.faces_packed()], maps=[texture_img.permute(1,2,0)])
+            mesh.textures = texture
+            save_obj('mesh.obj', mesh.verts_packed(), mesh.faces_packed(),verts_uvs=uvs, faces_uvs = mesh.faces_packed(),texture_map = texture_img.permute(1,2,0))
 
-        # 映射顶点坐标到纹理图像坐标
-        for i, (x, y, _) in enumerate(mesh.vertices):
-            u = int(np.clip(x, 0, texture_width - 1)) / texture_width
-            v = int(np.clip(y, 0, texture_height - 1)) / texture_height
-            uvs[i] = [u, 1 - v]  
-        texture = trimesh.visual.TextureVisuals(uv=uvs, image=texture_image)
-        mesh.visual = texture
+
+
         return mesh
+        # uvs = np.zeros((mesh.vertices.shape[0], 2), dtype=np.float32)
+        # texture_height, texture_width, _ = texture_image.shape
+
+        # # 映射顶点坐标到纹理图像坐标
+        # for i, (x, y, _) in enumerate(mesh.vertices):
+        #     u = int(np.clip(x, 0, texture_width - 1)) / texture_width
+        #     v = int(np.clip(y, 0, texture_height - 1)) / texture_height
+        #     uvs[i] = [u, 1 - v]  
+        # texture = trimesh.visual.TextureVisuals(uv=uvs, image=texture_image)
+        # mesh.visual = texture
+        # return mesh
     
     def find_paired_deformed_mesh(self,basepoints,num=3):
         chamfer_list = []
