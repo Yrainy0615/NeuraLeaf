@@ -27,6 +27,7 @@ Training:
   lr_decay_factor_lat: 0.5
   START_TRAIN_AT_IMG_SIZE: 8
   save_result: results/baseshape/sdf
+  test_result: results/baseshape
   checkpoint_path: checkpoints/baseshape/sdf
   save_name: hardsigmoid_new
 

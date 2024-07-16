@@ -14,13 +14,13 @@ from scripts.data.mesh_process import MeshProcessor
 from submodule.pixel2pixel.models import create_model
 from submodule.pixel2pixel.options.test_options import TestOptions
 from torchvision.transforms import Resize
+from pytorch3d.io import save_obj
 
-def generate_baseshape(decoder, latent, dataset,save_folder,mask_transform,k,save_image=False): 
+def generate_baseshape(decoder, latent, dataset,save_folder,idx,mask_transform,k,save_image=False): 
     """
     shape latent -> 2D SDF -> binary mask 
     """
-    idx1 = 106
-    idx2= 579
+    idx1, idx2 = idx
     masks1, mask2 = dataset[idx1]['hint'], dataset[idx2]['hint']
     masks_gt = torch.stack([torch.tensor(masks1), torch.tensor(mask2)], dim=0)
     masks_gt = masks_gt.permute(0, 3, 1, 2)
@@ -28,9 +28,11 @@ def generate_baseshape(decoder, latent, dataset,save_folder,mask_transform,k,sav
     masks_gt = mask_transform(masks_gt)
     latent_x = latent[idx1]
     latent_y = latent[idx2]
-    save_name = os.path.join(save_folder, f'inter_{idx1}_{idx2}.png')
+    save_name = os.path.join(save_folder, f'mask_inter_{idx1}_{idx2}.png')
+    save_name_gt = os.path.join(save_folder, f'mask_gt_{idx1}_{idx2}.png')
     # linear interpolation
     weights = torch.linspace(0, 1, 10).to(latent_x.device)
+   
     latent = latent_x * (1-weights[:, None]) + latent_y * weights[:, None]
     with torch.no_grad():
         masks = latent_to_mask(latent.to('cuda'), decoder=decoder, k=k,size=256)
@@ -42,20 +44,25 @@ def generate_baseshape(decoder, latent, dataset,save_folder,mask_transform,k,sav
 
         if save_image:
             save_tensor_image(masks, save_name)
-            save_tensor_image(masks_gt, os.path.join(save_folder, 'gt_mask.png'))
+            save_tensor_image(masks_gt,save_name_gt)
 
     return masks, masks_gt
 
-def generate_texture(model_texture,masks:torch.tensor,  save_folder, save_image=False):
+def generate_texture(model_texture,masks:torch.tensor, masks_gt,save_folder:str,idx,save_image=False):
     """
     generate texture from binary mask
     """
-
-    texture  = model_texture.netG(masks)
-    texture = (texture+1)/2
+    idx1, idx2 = idx
+    texture_pred  = model_texture.netG(masks)
+    texture_pred = (texture_pred+1)/2
+    texture_gt = model_texture.netG(masks_gt)
+    texture_gt = (texture_gt+1)/2
+    save_name_pred  = os.path.join(save_folder, f'texture_pred_{idx1}_{idx2}.png')
+    save_name_gt = os.path.join(save_folder, f'texture_gt_{idx1}_{idx2}.png') 
     if save_image:
-        save_tensor_image(texture, os.path.join(save_folder, 'texture.png'))
-    return texture
+        save_tensor_image(texture_pred, save_name_pred)
+        save_tensor_image(texture_gt, save_name_gt)
+    return texture_pred, texture_gt
 
 
 
@@ -78,26 +85,35 @@ if __name__ == '__main__':
     dataset = BaseShapeDataset(CFG['Training']['data_dir'], CFG['Training']['n_sample'])
     
     # load mask decoder
-    mask_decoder = SDFDecoder()
-    mask_decoder.eval()
-    mask_decoder.to(device)
-    checkpoint_baseshape = torch.load('checkpoints/baseshape/sdf/latest_sdfdecoder_hardsigmoid.pth',map_location='cpu')
-    mask_decoder.load_state_dict(checkpoint_baseshape['decoder'])
-    if 'k' in checkpoint_baseshape:
-        k = checkpoint_baseshape['k']
+    decoder_base = UDFNetwork(d_in=CFG['Base']['Z_DIM'],
+                         d_hidden=CFG['Base']['decoder_hidden_dim'],
+                         d_out=CFG['Base']['decoder_out_dim'],
+                         n_layers=CFG['Base']['decoder_nlayers'],
+                         udf_type='sdf',
+                         geometric_init=False) 
+    decoder_base.eval()
+    decoder_base.to(device)
+    checkpoint_base = torch.load('checkpoints/baseshape/latest_sigmoid.pth',map_location='cpu')
+    decoder_base.load_state_dict(checkpoint_base['decoder'])
+    if 'k' in checkpoint_base:
+        k = checkpoint_base['k']
     else:
         k=1
-    latent_shape =checkpoint_baseshape['latent_shape']['weight']
+    latent_shape =checkpoint_base['latent_shape']['weight']
     
     # baseshape generation 
-    masks, masks_gt = generate_baseshape(mask_decoder, latent_shape, dataset,'./', mask_transform, k, save_image=False)
+    idx = [200, 600]
+
+    masks, masks_gt = generate_baseshape(decoder_base, latent_shape, dataset,CFG['Training']['test_result'], idx,mask_transform, k, save_image=True)
     # texture generation  
     opt_texture = TestOptions().parse()
     opt_texture.gpu_ids = [args.gpu]
     model_texture = create_model(opt_texture)
     model_texture.setup(opt_texture)
     model_texture.eval()
-    texture = generate_texture(model_texture, masks, './', save_image=False)
+    texture, texture_gt = generate_texture(model_texture, masks, masks_gt,CFG['Training']['test_result'], idx, save_image=True)
+
+
     
     # base mesh with texture
     base_mesh = mask_to_mesh(masks) # return pytorch3d mesh

@@ -54,32 +54,33 @@ def sdf_to_mask(sdf:torch.Tensor,k:float=1):
 
 def mask_to_mesh(masks:torch.tensor, save_mesh=False):
     # list for store pytorch3d meshes
+    assert masks.dim() == 4, "masks should be 4D tensor"
     verts_list = []
     faces_list = []
-    if masks.dim() == 4:
-        for mask in masks:
+    for mask in masks:
+        if mask.min() < 0:  
             mask = (mask+1)
-            mask = mask[0]
-            mask_numpy = mask.cpu().numpy()
-            y, x = np.nonzero(mask_numpy > 0)
-            y_uv = y / mask_numpy.shape[0]
-            x_uv = x / mask_numpy.shape[1]
-            z = np.zeros_like(x)
-            verts = np.stack([x_uv, y_uv, z],axis=-1).reshape(-1,3)
-            pc = mn.pointCloudFromPoints(verts)
-            pc.validPoints = mm.pointUniformSampling(pc, 1e-3)
-            mesh = mm.triangulatePointCloud(pc)
-            # mesh = mm.offsetMesh(mesh, 0.0)
-            out_faces = mn.getNumpyFaces(mesh.topology)
-            verts_list.append(verts)
-            faces_list.append(out_faces)
-        mesh_pytorch3d = Meshes(verts=[torch.tensor(verts).float() for verts in verts_list], faces=[torch.tensor(faces).long() for faces in faces_list])
-        mesh_pytorch3d = mesh_pytorch3d.to(masks.device)
-        # save one mesh for test 
-        mesh1 = mesh_pytorch3d[0]
-        if save_mesh:
-            IO().save_mesh(mesh1, "mesh1.obj")
-        return mesh_pytorch3d
+        mask = mask[0]
+        mask_numpy = mask.cpu().numpy()
+        y, x = np.nonzero(mask_numpy > 0)
+        y_uv = y / mask_numpy.shape[0]
+        x_uv = x / mask_numpy.shape[1]
+        z = np.zeros_like(x)
+        verts = np.stack([x_uv, y_uv, z],axis=-1).reshape(-1,3)
+        pc = mn.pointCloudFromPoints(verts)
+        pc.validPoints = mm.pointUniformSampling(pc, 1e-3)
+        mesh = mm.triangulatePointCloud(pc)
+        # mesh = mm.offsetMesh(mesh, 0.0)
+        out_faces = mn.getNumpyFaces(mesh.topology)
+        verts_list.append(verts)
+        faces_list.append(out_faces)
+    mesh_pytorch3d = Meshes(verts=[torch.tensor(verts).float() for verts in verts_list], faces=[torch.tensor(faces).long() for faces in faces_list])
+    mesh_pytorch3d = mesh_pytorch3d.to(masks.device)
+    # save one mesh for test 
+    mesh1 = mesh_pytorch3d[0]
+    if save_mesh:
+        IO().save_mesh(mesh1, "mesh1.obj")
+    return mesh_pytorch3d
         
 
 
