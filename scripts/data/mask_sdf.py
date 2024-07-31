@@ -4,7 +4,7 @@ import pathlib
 import os
 import numpy as np
 import torch
-# ti.init(arch=ti.gpu, device_memory_GB=1.0, kernel_profiler=True, debug=True, print_ir=False)
+ti.init(arch=ti.gpu, device_memory_GB=1.0, kernel_profiler=True, debug=True, print_ir=False)
 
 MAX_DIST = 2147483647
 null = ti.Vector([-1, -1, MAX_DIST])
@@ -167,7 +167,7 @@ class SDF2D:
             offset = 127.5
             self.post_process_sdf(self.bit_pic_white, self.bit_pic_black, self.num, coefficient, offset)
             if output:
-                cv2.imwrite(self.output_filename('_sdf'), self.output_pic.to_numpy())
+                # cv2.imwrite(self.output_filename('_sdf'), self.output_pic.to_numpy())
                 return self.output_pic.to_numpy()
         else:  # no normalization
             if output:
@@ -272,12 +272,12 @@ class MultiSDF2D:
 
 
 if __name__ == "__main__":
-    root_dir = 'dataset/LeafData'
+    root_dir = 'dataset/2D_Datasets/Leaf_RGB'
     mask_files = []
     for dirpath, dirnames, filenames in os.walk(root_dir):
-        for filename in [f for f in filenames if f.endswith(".JPG")]:
+        for filename in [f for f in filenames if f.endswith(".png")]:
             if 'mask' in filename:
-                save_name = filename.replace('_mask_aligned.JPG', '_sdf.npy')
+                save_name = filename.replace('_mask.png', '_sdf.npy')
                 save_dir = os.path.join(dirpath, 'sdf')
                 if not os.path.exists(os.path.join(save_dir, save_name)):
                     mySDF2D = SDF2D(os.path.join(dirpath, filename))

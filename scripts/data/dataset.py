@@ -8,6 +8,7 @@ from PIL import Image
 import torchvision
 import torch
 import numpy as np
+from data.data_utils import data_processor
 # from utils.utils import sdf_to_mask 
 
 def sdf_to_mask(sdf:torch.Tensor,k:float=1):
@@ -96,10 +97,34 @@ class BaseShapeDataset(Dataset):
         sdf_sample = sdf[idx_x, idx_y]
         return xy_sample, sdf_sample
     
-class IndexedFashionMNIST(torchvision.datasets.FashionMNIST):
+class LeafRGBDataset(Dataset):
+    def __init__(self, root_dir='dataset/2D_Datasets', img_size=219, img_list=None):
+        self.transforms =  transforms.Compose([
+                transforms.Resize([img_size, img_size]), 
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5, 0.5, 0.5],
+                                     std=[0.5, 0.5, 0.5]),
+            ])
+        self.processor = data_processor(root_dir)
+        self.all_rgb = self.processor.all_rgb
+        self.img_list = img_list
     def __getitem__(self, index):
-        data, target = super().__getitem__(index)
-        return data, target, index
+        if self.img_list is not None:
+            name = self.img_list[index]
+        else: 
+            name = self.all_rgb[index]
+        img = Image.open(name).convert('RGB')
+        if self.transforms is not None:
+            img = self.transforms(img)
+        return img
+
+    def __len__(self):
+        if self.img_list is not None:
+            return len(self.img_list)
+        else:
+            return len(self.all_rgb)
+    def get_loader(self, batch_size, shuffle=False):
+        return DataLoader(self, batch_size=batch_size, shuffle=shuffle)
 
 if __name__ == '__main__':
     dataset = BaseShapeDataset('dataset/LeafData', n_sample=1000)

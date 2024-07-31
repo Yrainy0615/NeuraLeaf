@@ -1,7 +1,7 @@
 import os
 import trimesh
 import numpy as np
-from data_utils import data_processor
+from scripts.data.data_utils import data_processor
 import cv2
 from pytorch3d.io import load_ply, load_obj, save_ply, IO, save_obj
 from pytorch3d.structures import Meshes
@@ -12,7 +12,7 @@ from pytorch3d.transforms import RotateAxisAngle, Translate, Scale
 from pytorch3d.ops import sample_points_from_meshes
 from pytorch3d.structures import Meshes
 from pytorch3d.renderer import Textures
-from utils.utils import save_tensor_image, mask_to_mesh
+from utils.utils import save_tensor_image, mask_to_mesh, mask_to_mesh_distancemap
 import torchvision.transforms as transforms
 
 
@@ -26,10 +26,11 @@ class MeshProcessor(data_processor):
         self.base_img_cvpr = [os.path.join(root_dir, 'deformation_cvpr/base_img', i) for i in os.listdir(os.path.join(root_dir, 'deformation_cvpr/base_img'))]
         self.base_mask_cvpr = [os.path.join(root_dir, 'deformation_cvpr/base_mask', i) for i in os.listdir(os.path.join(root_dir, 'deformation_cvpr/base_mask'))]
         self.base_shape =None
-        self.deform_shape = [os.path.join(root_dir, 'deformation_cvpr/deform_shape', i) for i in os.listdir(os.path.join(root_dir, 'deformation_cvpr/deform_shape')) if not 'registrated' in i]
+        self.deform_shape = None
+        self.deform_shape_raw = [os.path.join(root_dir, 'deformation_cvpr/raw_3d', i) for i in os.listdir(os.path.join(root_dir, 'deformation_cvpr/raw_3d'))]
         self.base_img_cvpr.sort()
         self.base_mask_cvpr.sort()
-        self.deform_shape.sort()
+        self.deform_shape_raw.sort()
         
     def normalize(self, verts:torch.tensor):
         centroid = verts.mean(dim=0)
@@ -50,8 +51,8 @@ class MeshProcessor(data_processor):
             verts= mesh.verts_packed()
             faces = mesh.faces_packed().unsqueeze(0)
             uvs = torch.zeros_like(verts,device=texture_image.device)
-            uvs[:,0] =  verts[:,0]
-            uvs[:,1] = 1- verts[:,1]
+            uvs[:,0] =  verts[:,0]/texture_img.shape[1]
+            uvs[:,1] = verts[:,1]/texture_img.shape[1]
             uvs = uvs.unsqueeze(0)
             texture = Textures(verts_uvs=uvs[:,:,:2], faces_uvs=faces, maps=texture_img.permute(1,2,0).unsqueeze(0))
             mesh.textures = texture
@@ -62,13 +63,8 @@ class MeshProcessor(data_processor):
                 save_obj(f'mesh_{i}.obj', mesh.verts_packed(), mesh.faces_packed(),verts_uvs=uvs[:,:,:2].squeeze(),faces_uvs=faces.squeeze(),texture_map = texture_img.permute(1,2,0))
 
 
-        return meshes
-    
-    def sample_points(self, mesh:Meshes, num_points=10000):
-        verts = mesh.verts_packed()
-        faces = mesh.faces_packed()
-        sampled_points = Meshes(verts=[verts], faces=[faces]).sample_points(num_points)
-        return sampled_points
+        return uvs[:,:,:2].squeeze(), faces.squeeze(), texture_img.permute(1,2,0)
+
     
     def find_paired_deformed_mesh(self,basepoints,num=3):
         chamfer_list = []
@@ -84,7 +80,7 @@ class MeshProcessor(data_processor):
         img_tensor = torch.tensor(img).permute(2, 0, 1).unsqueeze(0).float() / 255
         return img_tensor
     
-    def nonrigid_cpd_cuda(self, basepoints:torch.tensor, deformed_points:torch.tensor, use_cuda=True):
+    def nonrigid_cpd_cuda(self, basepoints:torch.tensor, deformed_points:torch.tensor, deform_sample,use_cuda=True):
         import cupy as cp
         if use_cuda:
             to_cpu = cp.asnumpy
@@ -94,11 +90,22 @@ class MeshProcessor(data_processor):
             to_cpu = lambda x: x
         source_pt = cp.asarray(basepoints)
         target_pt = cp.asarray(deformed_points)
+        target_sample = cp.asarray(deform_sample)
+        # first perform rigid
+        rcpd = cpd.RigidCPD(target_sample, use_cuda=use_cuda)
+        tf_param_rgd, _, _ = rcpd.registration(source_pt)
+        result_rgd = tf_param_rgd.transform(target_sample)
+        target_rgd = tf_param_rgd.transform(target_pt)
+        # then non-rigd
         acpd = cpd.NonRigidCPD(source_pt, use_cuda=use_cuda)
-        tf_param, _ ,_ = acpd.registration(target_pt)
-        result = tf_param.transform(source_pt)
+        tf_param_nrgd, _ ,_ = acpd.registration(result_rgd)
+        result_nrgd = tf_param_nrgd.transform(source_pt)
         # registrated_mesh = Meshes(verts=[result], faces=[base.faces_packed()])
-        return torch.tensor(result)
+        return torch.tensor(target_rgd), torch.tensor(result_nrgd)
+
+    def nonrigid_opt(self,source:torch.tensor, target:torch.tensor,mask:torch.tensor):
+        pass
+        
 
     def crop_img_mask(self, mask:np.array, img:np.array,mask_size=512):
         gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
@@ -126,13 +133,16 @@ class MeshProcessor(data_processor):
 if __name__ == "__main__":
     root = 'dataset/'
     # set device to gpu 1
-    os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+    os.environ["CUDA_VISIBLE_DEVICES"] = '2'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')    
     processor = MeshProcessor(root)
+    save_folder = os.path.join(root,'deformation_cvpr')
     # new registration test
     resize_transform = transforms.Resize((256, 256))
-
+    # setting
     crop = False
+    test_normalize = False
+    # data process
     base_img = processor.base_img_cvpr
     base_mask = processor.base_mask_cvpr
     for i in range(len(base_mask)):
@@ -150,15 +160,23 @@ if __name__ == "__main__":
         texture = cv2.cvtColor(texture, cv2.COLOR_BGR2RGB)
         texture_tensor = processor.img_to_tensor(texture)
         mask_tensor = processor.img_to_tensor(mask)
-        base_mesh = mask_to_mesh(resize_transform(mask_tensor), device)
-        # textured_mesh= processor.uv_mapping(base_mesh, texture_tensor, save_mesh=True)
-        deformed_shape = load_ply(processor.deform_shape[i])
-        deformed_shape = Meshes(verts=[deformed_shape[0].to(device)], faces=[deformed_shape[1].to(device)])
-        base_sampled = sample_points_from_meshes(base_mesh, 10000)
-        deformed_sampled = sample_points_from_meshes(deformed_shape, 10000)
-        registration = processor.nonrigid_cpd_cuda(processor.normalize(base_mesh.verts_packed()),processor.normalize(deformed_sampled.cpu().squeeze()), use_cuda=True)
-        base_registration = Meshes(verts=[registration.to(device)], faces=[base_mesh.faces_packed().to(device)])
-        save_obj('registration.obj', registration, base_mesh.faces_packed())
+        # base_mesh = mask_to_mesh(resize_transform(mask_tensor), device)
+        base_mesh = mask_to_mesh_distancemap(mask_file)
+        verts_uv, faces_uv , map= processor.uv_mapping(base_mesh, texture_tensor, save_mesh=True)
+        deformed_shape = load_ply(processor.deform_shape_raw[i])
+        deformed_shape = Meshes(verts=[deformed_shape[0]], faces=[deformed_shape[1]])
+        base_points_norm = processor.normalize(base_mesh.verts_packed())
+        base_mesh_norm = Meshes(verts=[base_points_norm], faces=[base_mesh.faces_packed()])
+        save_obj(os.path.join(save_folder,'base_shape',f'base_{i}.obj'), base_points_norm, base_mesh.faces_packed(),verts_uvs=verts_uv,faces_uvs=faces_uv,texture_map = map)
+        deformed_points_norm = processor.normalize(deformed_shape.verts_packed())
+        deformed_mesh_norm = Meshes(verts=[deformed_points_norm], faces=[deformed_shape.faces_packed()])
+        deformed_sampled = sample_points_from_meshes(deformed_mesh_norm, 10000)
+
+        rigid_deform, nrgd_pts = processor.nonrigid_cpd_cuda(base_points_norm,deformed_points_norm,deformed_sampled.squeeze(), use_cuda=True)
+        save_obj(os.path.join(save_folder,'deform_shape',f'deformed_raw_{i}.obj'), rigid_deform, deformed_shape.faces_packed())
+
+        save_obj(os.path.join(save_folder,'deform_shape',f'deform_{i}.obj'), nrgd_pts, base_mesh.faces_packed(),verts_uvs=verts_uv,faces_uvs=faces_uv,texture_map = map)
+        base_nrgd_mesh = Meshes(verts=[nrgd_pts], faces=[base_mesh.faces_packed()])
         pass
 
     # test uv mapping 

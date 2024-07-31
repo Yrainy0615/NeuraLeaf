@@ -10,7 +10,10 @@ import math
 from torchvision.utils import make_grid, save_image
 from pytorch3d.structures import Meshes
 from pytorch3d.io import IO
- 
+import sys
+sys.path.append('scripts')
+from data.mask_sdf import SDF2D
+import os
 
 def tensor2im(input_image, imtype=np.uint8):
     """"Converts a Tensor array into a numpy image array.
@@ -70,7 +73,7 @@ def mask_to_mesh(masks:torch.tensor, save_mesh=False):
         pc = mn.pointCloudFromPoints(verts)
         pc.validPoints = mm.pointUniformSampling(pc, 1e-3)
         mesh = mm.triangulatePointCloud(pc)
-        # mesh = mm.offsetMesh(mesh, 0.0)
+        # mesh = mm.offsetMesh(mesh, 0.1)
         out_faces = mn.getNumpyFaces(mesh.topology)
         verts_list.append(verts)
         faces_list.append(out_faces)
@@ -82,10 +85,38 @@ def mask_to_mesh(masks:torch.tensor, save_mesh=False):
         IO().save_mesh(mesh1, "mesh1.obj")
     return mesh_pytorch3d
         
+def mask_to_mesh_distancemap(mask_file:str):
+    # get folder dir of maskfile
+    mask_dir = os.path.dirname(mask_file) 
+    sdf_name = os.path.basename(mask_file).split(".")[0]
+    sdf_path = os.path.join(mask_dir,'output' ,sdf_name+'_sdf.jpg')
+    if not os.path.exists(sdf_path):
+        mySDF2D = SDF2D(mask_file)              
 
+    
+    distance_map = mm.loadDistanceMapFromImage(mm.Path(sdf_path), 0)
+    polyline2 = mm.distanceMapTo2DIsoPolyline(distance_map, isoValue=127.5)
+
+    # Create an empty HolesVertIds object if there are no holes
+    holes_vert_ids = mm.HolesVertIds()
+
+    # Call contours2 with the required argument
+    contours = polyline2.contours2(holes_vert_ids)
+
+    # Compute the triangulation inside the contour
+    mesh = mm.triangulateContours(contours)
+    props = mm.SubdivideSettings()
+    props.maxDeviationAfterFlip = 0.5
+    mm.subdivideMesh(mesh,props)
+    verts = mn.getNumpyVerts(mesh)
+    faces = mn.getNumpyFaces(mesh.topology)
+    mesh_torch3d = Meshes(verts=[torch.tensor(verts).float()], faces=[torch.tensor(faces).long()])
+    return mesh_torch3d
+    # sdf = image_to_sdf(sdf_img)
+    
 
 def save_tensor_image(tensor,path):
-    grid  = make_grid(tensor, n_row=int(math.sqrt(tensor.shape[0])))
+    grid  = make_grid(tensor, n_row=int(math.sqrt(tensor.shape[0])), normalize=True)
     save_image(grid, path)
 
 def denormalize(tensor, mean=0.5,std=0.5):
@@ -129,8 +160,10 @@ def deform_mesh(mesh,
 if __name__ == "__main__":
     mask_path = "dataset/LeafData/Chinar/healthy/Chinar_healthy_0001_mask_aligned.JPG"
     mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-    mesh = mask_to_mesh(mask_path) 
-    mrmeshpy.saveMesh(mesh, mrmeshpy.Path("leaf_2d.ply"))
+    mask_tensor = torch.tensor(mask).unsqueeze(0).unsqueeze(0)
+    mesh = mask_to_mesh(mask_tensor) 
+    mesh = mask_to_mesh_distancemap(mask_path)
+    # mrmeshpy.saveMesh(mesh, mrmeshpy.Path("leaf_2d.ply"))
     
     
     

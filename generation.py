@@ -25,7 +25,7 @@ def generate_baseshape(decoder, latent, dataset,save_folder,idx,mask_transform,k
     masks_gt = torch.stack([torch.tensor(masks1), torch.tensor(mask2)], dim=0)
     masks_gt = masks_gt.permute(0, 3, 1, 2)
     # masks_gt = masks_gt[:,0,:,:].unsqueeze(1)
-    masks_gt = mask_transform(masks_gt)
+    # masks_gt = mask_transform(masks_gt)
     latent_x = latent[idx1]
     latent_y = latent[idx2]
     save_name = os.path.join(save_folder, f'mask_inter_{idx1}_{idx2}.png')
@@ -102,7 +102,7 @@ if __name__ == '__main__':
     latent_shape =checkpoint_base['latent_shape']['weight']
     
     # baseshape generation 
-    idx = [200, 600]
+    idx = [106, 579]
 
     masks, masks_gt = generate_baseshape(decoder_base, latent_shape, dataset,CFG['Training']['test_result'], idx,mask_transform, k, save_image=True)
     # texture generation  

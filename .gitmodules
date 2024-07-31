@@ -13,3 +13,6 @@
 [submodule "submodule/pixel2pixel"]
 	path = submodule/pixel2pixel
 	url = https://github.com/junyanz/pytorch-CycleGAN-and-pix2pix.git
+[submodule "submodule/SITTA"]
+	path = submodule/SITTA
+	url = https://github.com/Boyiliee/SITTA.git
