@@ -25,3 +25,5 @@ taichi==1.7.1
 wandb==0.17.2
 trimesh==4.4.1
 probreg==0.3.8
+dominate==2.9.1
+visdom==0.2.4
