@@ -16,6 +16,7 @@ class data_processor():
         self.healthy_rgb = []
         self.diseased_rgb = []
         self.extra_mask = []
+        self.extra_sdf = []
         self.all_sdf = []
         self.all_base_mesh = []
         self.all_deformed_mesh = None
@@ -37,10 +38,14 @@ class data_processor():
             for file in files:
                 if file.endswith('.jpg'):
                     self.extra_mask.append(os.path.join(root, file))
+                elif file.endswith('.npy'):
+                    self.extra_sdf.append(os.path.join(root, file))
         self.healthy_rgb = [x for x in self.all_rgb if 'healthy' in x]
         self.healthy_masks = [x for x in self.all_masks if 'healthy' in x]
         self.diseased_rgb = [x for x in self.all_rgb if 'diseased' in x]
         self.diseased_masks = [x for x in self.all_masks if 'diseased' in x]
+        self.healthy_sdf = [x for x in self.all_sdf if 'healthy' in x]
+        self.diseased_sdf = [x for x in self.all_sdf if 'diseased' in x]
         self.all_rgb.sort()
         self.all_masks.sort()
         self.extra_mask.sort()
@@ -48,11 +53,18 @@ class data_processor():
         self.healthy_rgb.sort()
         self.diseased_masks.sort()
         self.diseased_rgb.sort()
+        self.healthy_sdf.sort()
+        self.diseased_sdf.sort()
+        self.all_sdf.sort()
+        self.extra_sdf.sort()
         self.base_mask = self.healthy_masks + self.extra_mask
+        self.base_sdf = self.healthy_sdf + self.extra_sdf
+        self.base_mask.sort()
+        self.base_sdf.sort()
         # save base_mask 
-        if not os.path.exists(os.path.join(root_dir,'base_mask.txt')):
-            with open(os.path.join(root_dir,'base_mask.txt'), 'w') as f:
-                for item in self.base_mask:
+        if not os.path.exists(os.path.join(root_dir,'base_sdf.txt')):
+            with open(os.path.join(root_dir,'base_sdf.txt'), 'w') as f:
+                for item in self.base_sdf:
                     f.write("%s\n" % item)
 
 

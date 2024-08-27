@@ -117,6 +117,8 @@ def mask_to_mesh_distancemap(mask_file:str):
 
 def save_tensor_image(tensor,path):
     grid  = make_grid(tensor, n_row=int(math.sqrt(tensor.shape[0])), normalize=True)
+    if not os.path.exists(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
     save_image(grid, path)
 
 def denormalize(tensor, mean=0.5,std=0.5):

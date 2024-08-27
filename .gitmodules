@@ -16,3 +16,6 @@
 [submodule "submodule/SITTA"]
 	path = submodule/SITTA
 	url = https://github.com/Boyiliee/SITTA.git
+[submodule "submodule/santa"]
+	path = submodule/santa
+	url = https://github.com/Mid-Push/santa.git

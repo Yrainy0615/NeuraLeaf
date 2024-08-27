@@ -272,23 +272,22 @@ class MultiSDF2D:
 
 
 if __name__ == "__main__":
-    root_dir = 'dataset/2D_Datasets/Leaf_RGB'
+    root_dir = 'dataset/2D_Datasets/canonical_mask'
     mask_files = []
     for dirpath, dirnames, filenames in os.walk(root_dir):
-        for filename in [f for f in filenames if f.endswith(".png")]:
-            if 'mask' in filename:
-                save_name = filename.replace('_mask.png', '_sdf.npy')
-                save_dir = os.path.join(dirpath, 'sdf')
-                if not os.path.exists(os.path.join(save_dir, save_name)):
-                    mySDF2D = SDF2D(os.path.join(dirpath, filename))
-                    
-                    sdf_img = mySDF2D.mask2sdf()
-                    sdf = image_to_sdf(sdf_img)
+        for filename in [f for f in filenames if f.endswith(".jpg")]:
+            save_name = filename.replace('.jpg', '_sdf.npy')
+            save_dir = os.path.join(dirpath, 'sdf')
+            if not os.path.exists(os.path.join(save_dir, save_name)):
+                mySDF2D = SDF2D(os.path.join(dirpath, filename))
+                
+                sdf_img = mySDF2D.mask2sdf()
+                sdf = image_to_sdf(sdf_img)
 
-                    if not os.path.exists(save_dir):
-                        os.makedirs(save_dir)
-                    np.save(os.path.join(save_dir, save_name), sdf)
-                    print(f'{save_name} is saved')
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
+                np.save(os.path.join(save_dir, save_name), sdf)
+                print(f'{save_name} is saved')
                 # ti.kernel_profiler_print()
 
 

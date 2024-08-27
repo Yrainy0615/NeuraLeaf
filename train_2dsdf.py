@@ -95,7 +95,7 @@ class BaseTrainer(object):
                 sum_loss_dict[k] += loss_dict[k]
             if epoch % vis_interval == 0:
                 self.generate_examples(epoch, n=4)
-                save_tensor_image(mask_gt.permute(0,3,1,2), os.path.join(self.cfg['save_result'], f'mask_gt_{epoch}.png'))
+                save_tensor_image(mask_gt, os.path.join(self.cfg['save_result'], f'mask_gt_{epoch}.png'))
             if epoch % ckpt_interval == 0 and epoch > 0:
                 self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=f'epoch_{epoch}_{save_name}.pth')
             # print result
@@ -117,7 +117,6 @@ class BaseTrainer(object):
         sdf_gt = batch_cuda['sdf']
         mask_gt = batch_cuda['hint']
         points = batch_cuda['points']
-        label = batch_cuda['label']
         idx = batch_cuda['idx']
         latent_shape = self.latent_shape(idx)
         glob_cond = torch.cat([latent_shape.unsqueeze(1).expand(-1, points.shape[1], -1), points], dim=2)
@@ -127,7 +126,7 @@ class BaseTrainer(object):
         loss_mse = F.mse_loss(sdf_pred.squeeze(), sdf_gt)
         lat_reg = latent_shape.norm(2, dim=1).mean()
         mask_pred  = latent_to_mask(latent_shape, decoder=self.decoder, size=128, k = self.k)
-        loss_mask = torch.abs(mask_pred - mask_gt[:,:,:,0]).mean()
+        loss_mask = torch.abs(mask_pred - mask_gt[:,0,:,:]).mean()
         loss_dict = {'loss_mse': loss_mse, 'lat_reg': lat_reg, 'loss_mask': loss_mask}
         
         loss_total = 0
@@ -173,8 +172,7 @@ class BaseTrainer(object):
             
 if __name__ == '__main__':       
     parser = argparse.ArgumentParser(description='RUN Leaf NPM')
-    parser.add_argument('--gpu', type=int, default=7
-                        , help='gpu index')
+    parser.add_argument('--gpu', type=int, default=1, help='gpu index')
     parser.add_argument('--wandb', type=str, default='base shape', help='run name of wandb')
     parser.add_argument('--mode', type=str, default='train', help='mode of train, shape or texture')
     parser.add_argument('--ckpt_shape', type=str, default='checkpoints/baseshape/sdf/latest.pth', help='checkpoint directory')
@@ -185,8 +183,8 @@ if __name__ == '__main__':
     
     # setting
     args = parser.parse_args()
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+    device = torch.device(f'cuda:{str(args.gpu)}' if torch.cuda.is_available() else 'cpu')
     CFG = yaml.safe_load(open(args.config, 'r')) 
     if args.use_wandb:
         wandb.init(project='NeuraLeaf', name =args.wandb)

@@ -23,7 +23,7 @@ def generate_baseshape(decoder, latent, dataset,save_folder,idx,mask_transform,k
     idx1, idx2 = idx
     masks1, mask2 = dataset[idx1]['hint'], dataset[idx2]['hint']
     masks_gt = torch.stack([torch.tensor(masks1), torch.tensor(mask2)], dim=0)
-    masks_gt = masks_gt.permute(0, 3, 1, 2)
+    # masks_gt = masks_gt.permute(0, 3, 1, 2)
     # masks_gt = masks_gt[:,0,:,:].unsqueeze(1)
     # masks_gt = mask_transform(masks_gt)
     latent_x = latent[idx1]
@@ -48,21 +48,27 @@ def generate_baseshape(decoder, latent, dataset,save_folder,idx,mask_transform,k
 
     return masks, masks_gt
 
-def generate_texture(model_texture,masks:torch.tensor, masks_gt,save_folder:str,idx,save_image=False):
+def generate_texture(model_texture, latent_tex:torch.tensor, masks:torch.tensor, masks_gt,save_folder:str,idx,save_image=False):
     """
     generate texture from binary mask
     """
     idx1, idx2 = idx
-    texture_pred  = model_texture.netG(masks)
-    texture_pred = (texture_pred+1)/2
-    texture_gt = model_texture.netG(masks_gt)
-    texture_gt = (texture_gt+1)/2
-    save_name_pred  = os.path.join(save_folder, f'texture_pred_{idx1}_{idx2}.png')
-    save_name_gt = os.path.join(save_folder, f'texture_gt_{idx1}_{idx2}.png') 
-    if save_image:
-        save_tensor_image(texture_pred, save_name_pred)
-        save_tensor_image(texture_gt, save_name_gt)
-    return texture_pred, texture_gt
+    # random generate 50 idx 
+    tex_idx = np.random.randint(0,latent_tex.shape[0],3)
+    for i in range(3):
+        idx= tex_idx[i]
+        cond = latent_tex[idx]
+        cond  = cond.unsqueeze(0).repeat(masks.shape[0],1)
+        texture_pred  = model_texture.netG(masks,cond)
+        texture_pred = (texture_pred+1)/2
+        # texture_gt = model_texture.netG(masks_gt,cond)
+        # texture_gt = (texture_gt+1)/2
+        save_name_pred  = os.path.join(save_folder, f'texture_pred_{idx1}_{idx2}_tex_{idx}.png')
+        # save_name_gt = os.path.join(save_folder, f'texture_gt_{idx1}_{idx2}.png') 
+        if save_image:
+            save_tensor_image(texture_pred, save_name_pred)
+            # save_tensor_image(texture_gt, save_name_gt)
+    return texture_pred
 
 
 
@@ -75,7 +81,7 @@ if __name__ == '__main__':
     # setting
     args = parser.parse_args()
     # os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(f'cuda:{str(args.gpu)}' if torch.cuda.is_available() else 'cpu')
     CFG = yaml.safe_load(open(args.config, 'r')) 
     mask_transform =  transforms.Compose([transforms.Normalize((0.5,), (0.5,),(0.5,)),
                                         transforms.Resize((256, 256)),])
@@ -93,7 +99,7 @@ if __name__ == '__main__':
                          geometric_init=False) 
     decoder_base.eval()
     decoder_base.to(device)
-    checkpoint_base = torch.load('checkpoints/baseshape/latest_sigmoid.pth',map_location='cpu')
+    checkpoint_base = torch.load('checkpoints/baseshape/sdf/latest_sigmoid.pth',map_location='cpu')
     decoder_base.load_state_dict(checkpoint_base['decoder'])
     if 'k' in checkpoint_base:
         k = checkpoint_base['k']
@@ -102,16 +108,16 @@ if __name__ == '__main__':
     latent_shape =checkpoint_base['latent_shape']['weight']
     
     # baseshape generation 
-    idx = [106, 579]
+    idx = [0, 500]
 
     masks, masks_gt = generate_baseshape(decoder_base, latent_shape, dataset,CFG['Training']['test_result'], idx,mask_transform, k, save_image=True)
     # texture generation  
     opt_texture = TestOptions().parse()
     opt_texture.gpu_ids = [args.gpu]
     model_texture = create_model(opt_texture)
-    model_texture.setup(opt_texture)
+    latent_tex = model_texture.setup(opt_texture)
     model_texture.eval()
-    texture, texture_gt = generate_texture(model_texture, masks, masks_gt,CFG['Training']['test_result'], idx, save_image=True)
+    texture, texture_gt = generate_texture(model_texture, latent_tex,masks, masks_gt,CFG['Training']['test_result'], idx, save_image=True)
 
 
     

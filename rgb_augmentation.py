@@ -6,10 +6,12 @@ import numpy as np
 from scripts.data.dataset import LeafRGBDataset
 from torchvision.utils import save_image
 from scripts.utils.utils import save_tensor_image
+from submodule.pixel2pixel.models import create_model
+from submodule.pixel2pixel.options.test_options import TestOptions
+import argparse
+import yaml
 
-
-
-def main():
+def main_santa():
     opts = get_arguments()
     config = get_config(opts.config)
     config_g = config['netG']
@@ -52,10 +54,35 @@ def main():
             save_tensor_image(s_A_mean, f'results/SITTA/s_A_mean_{it}.png')
             save_tensor_image(s_B_mean, f'results/SITTA/s_B_mean_{it}.png')
            
-    
+def main_pix2pix():
+    opt_texture = TestOptions().parse()
+    # opt_texture.gpu_ids = [args.gpu]
+    model_texture = create_model(opt_texture)
+    model_texture.setup(opt_texture)
+    model_texture.eval()
+    dataset = LeafRGBDataset('dataset/2D_Datasets')
+    img_loader = dataset.get_loader(1, True)
+    for i, data in enumerate(img_loader):
+        real, name = data
+        fake = model_texture.netG(real)
+        save_tensor_image(real, f'results/pix2pix/gen/real_{i}.png')
+        save_tensor_image(fake, f'results/pix2pix/gen/fake_{i}.png')
+
+        
     
 if __name__ == '__main__':
-    opts = get_arguments()
-    print('Select Func {}'.format(opts.func))
-    if opts.func == 'main':
-        main()
+    # opts = get_arguments()
+    # print('Select Func {}'.format(opts.func))
+    parser = argparse.ArgumentParser(description='RUN Leaf NPM')
+    parser.add_argument('--gpu', type=int, default=0, help='gpu index')
+    parser.add_argument('--save_folder', type=str, default='results', help='output directory')
+    parser.add_argument('--config', type=str, default='scripts/configs/bashshape.yaml', help='config file')
+    
+    # setting
+    args = parser.parse_args()
+    # os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+    device = torch.device(f'cuda:{str(args.gpu)}' if torch.cuda.is_available() else 'cpu')
+    CFG = yaml.safe_load(open(args.config, 'r')) 
+
+    # load dataset
+    main_pix2pix()

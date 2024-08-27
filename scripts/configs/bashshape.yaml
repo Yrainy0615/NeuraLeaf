@@ -18,7 +18,7 @@ Training:
   batch_size: 32
   num_epochs: 3000
   vis_interval: 50
-  data_dir: dataset/LeafData
+  data_dir: dataset/2D_Datasets
   n_sample: 5000
   LR_D: 0.001
   LR_LAT: 0.001
@@ -29,7 +29,7 @@ Training:
   save_result: results/baseshape/sdf
   test_result: results/baseshape
   checkpoint_path: checkpoints/baseshape/sdf
-  save_name: hardsigmoid_new
+  save_name: base_all
 
 
   lambdas:
