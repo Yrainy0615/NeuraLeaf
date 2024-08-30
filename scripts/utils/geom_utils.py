@@ -4,6 +4,9 @@ import torch.nn.functional as F
 from scipy.spatial.transform import Rotation as R
 from pytorch3d import transforms
 from matplotlib import pyplot as plt
+import numpy as np
+from scipy.spatial import cKDTree as KDTree
+
 
 def rts_invert(rts_in):
     """
@@ -128,4 +131,31 @@ def vis_points(points:torch.tensor):
     # save the figure
     plt.savefig('bone.png')
     plt.close()
-    
+
+
+def create_grid_points_from_bounds(minimun, maximum, res, scale=None):
+    if scale is not None:
+        res = int(scale * res)
+        minimun = scale * minimun
+        maximum = scale * maximum
+    x = np.linspace(minimun[0], maximum[0], res)
+    y = np.linspace(minimun[1], maximum[1], res)
+    z = np.linspace(minimun[2], maximum[2], res)
+    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+    X = X.reshape((np.prod(X.shape),))
+    Y = Y.reshape((np.prod(Y.shape),))
+    Z = Z.reshape((np.prod(Z.shape),))
+
+    points_list = np.column_stack((X, Y, Z))
+    del X, Y, Z, x
+    return points_list
+
+
+def points_to_occ(grid,pts,res=128):
+    kdtree = KDTree(grid)
+    occupancies = np.zeros(len(grid), dtype=np.int8)
+    pts = pts.cpu().numpy()
+    _, idx = kdtree.query(pts)
+    occupancies[idx] = 1
+    occupancy_grid = occupancies.reshape(res,res,res)
+    return occupancy_grid

@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 import numpy as np 
+import torch.nn.functional as F
+from pytorch3d import transforms
+
 
 class MaskDecoder(nn.Module):
     def __init__(self, latent_dim=256, img_channels=1, img_size=512):
@@ -233,6 +236,179 @@ class Embedder:
     def embed(self, inputs):
         return torch.cat([fn(inputs) for fn in self.embed_fns], -1)
 
+class BoneDecoder(nn.Module):
+    def __init__(self, num_bones, latent_dim=128):
+        super(BoneDecoder, self).__init__()
+        self.num_bones = num_bones
+        self.latent_dim = latent_dim
+        self.fc1 = nn.Linear(latent_dim, 256)  
+        self.fc2 = nn.Linear(256, 256)         
+        self.fc3 = nn.Linear(256, num_bones * 10)  
+        
+
+    
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        x = x.view(-1, self.num_bones, 10)
+        
+        # get bone centers, orientations, and scales
+        centers = x[:, :, :3]
+        centers = torch.clamp(centers, min=-1, max=1)
+
+        orientations = x[:, :, 3:7]
+        scales = x[:, :, 7:]    
+        # normalize orientations
+        orientations = F.normalize(orientations, p=2, dim=-1)
+        bones = torch.cat([centers, orientations, scales], dim=-1)
+        return bones
+
+class Embedding(nn.Module):
+    def __init__(self, in_channels, N_freqs=10, logscale=True, alpha=None):
+        """
+        adapted from https://github.com/kwea123/nerf_pl/blob/master/models/nerf.py
+        Defines a function that embeds x to (x, sin(2^k x), cos(2^k x), ...)
+        in_channels: number of input channels (3 for both xyz and direction)
+        """
+        super(Embedding, self).__init__()
+        self.N_freqs = N_freqs
+        self.in_channels = in_channels
+        self.funcs = [torch.sin, torch.cos]
+        self.nfuncs = len(self.funcs)
+        self.out_channels = in_channels*(len(self.funcs)*N_freqs+1)
+        if alpha is None:
+            self.alpha = self.N_freqs
+        else: self.alpha = alpha
+
+        if logscale:
+            self.freq_bands = 2**torch.linspace(0, N_freqs-1, N_freqs)
+        else:
+            self.freq_bands = torch.linspace(1, 2**(N_freqs-1), N_freqs)
+
+    def forward(self, x):
+        """
+        Embeds x to (x, sin(2^k x), cos(2^k x), ...) 
+        Different from the paper, "x" is also in the output
+        See https://github.com/bmild/nerf/issues/12
+
+        Inputs:
+            x: (B, self.in_channels)
+
+        Outputs:
+            out: (B, self.out_channels)
+        """
+        # consine features
+        if self.N_freqs>0:
+            shape = x.shape
+            bs = shape[0]
+            input_dim = shape[-1]
+            output_dim = input_dim*(1+self.N_freqs*self.nfuncs)
+            out_shape = shape[:-1] + ((output_dim),)
+            device = x.device
+
+            x = x.view(-1,input_dim)
+            out = []
+            for freq in self.freq_bands:
+                for func in self.funcs:
+                    out += [func(freq*x)]
+            out =  torch.cat(out, -1)
+
+            ## Apply the window w = 0.5*( 1+cos(pi + pi clip(alpha-j)) )
+            out = out.view(-1, self.N_freqs, self.nfuncs, input_dim)
+            window = self.alpha - torch.arange(self.N_freqs).to(device)
+            window = torch.clamp(window, 0.0, 1.0)
+            window = 0.5 * (1 + torch.cos(np.pi * window + np.pi))
+            window = window.view(1,-1, 1, 1)
+            out = window * out
+            out = out.view(-1,self.N_freqs*self.nfuncs*input_dim)
+
+            out = torch.cat([x, out],-1)
+            out = out.view(out_shape)
+        else: out = x
+        return out
+
+class BoneRotationPredictor(nn.Module):
+    def __init__(self, num_bones, latent_dim=128, center_dim=3, use_quat=True, D=8, W=256):
+        super(BoneRotationPredictor, self).__init__() 
+        self.num_bones = num_bones
+        self.latent_dim = latent_dim
+        self.center_dim = center_dim
+        self.use_quat = use_quat
+        self.D = D
+        self.W = W
+
+        input_dim = latent_dim + 63
+
+        self.layers = nn.ModuleList()
+        for i in range(D):
+            in_features = input_dim if i == 0 else W
+            out_features = W
+            self.layers.append(nn.Sequential(
+                nn.Linear(in_features, out_features),
+                nn.ReLU(inplace=True)
+            ))
+            input_dim = W  
+
+        if self.use_quat:
+            self.rotation_output = nn.Linear(W,   7)  # quaternion output
+        else:
+            self.rotation_output = nn.Linear(W, 6)  # rotation output
+
+    def forward(self, latent_code, centers):
+        latent_code_expanded = latent_code.unsqueeze(1).expand(-1, centers.size(1), -1)        
+        x = torch.cat([centers, latent_code_expanded], dim=2)  # [1, B, 63+lat_dim]
+        x = x.squeeze()
+        for layer in self.layers:
+            x = layer(x)
+        
+        rotations = self.rotation_output(x)
+        tmat = rotations[:, :3]
+        if self.use_quat:
+            rquat = rotations[:,3:7]
+            rquat= F.normalize(rquat, p=2, dim=-1)
+            rmat = transforms.quaternion_to_matrix(rquat)
+        else:
+            rot  = x[:, 3:6]
+            rmat = transforms.so3_exponential_map(rot)
+            
+        rmat = rmat.view(-1, 9)
+        rts = torch.cat([rmat, tmat], -1)
+        rts = rts.view(x.shape[0],1,-1)
+        return rts
+
+class BoneSWPredictor(nn.Module):
+    def __init__(self, num_bones, latent_dim=128, center_dim=3, use_quat=True, D=8, W=256):
+        super(BoneSWPredictor, self).__init__() 
+        self.num_bones = num_bones
+        self.latent_dim = latent_dim
+        self.center_dim = center_dim
+        self.use_quat = use_quat
+        self.D = D
+        self.W = W
+
+        input_dim = latent_dim + 63
+
+        self.layers = nn.ModuleList()
+        for i in range(D):
+            in_features = input_dim if i == 0 else W
+            out_features = W
+            self.layers.append(nn.Sequential(
+                nn.Linear(in_features, out_features),
+                nn.ReLU(inplace=True)
+            ))
+            input_dim = W  
+        self.bone_head = nn.Linear(W, num_bones)
+
+
+    def forward(self, latent_code, centers):
+        latent_code_expanded = latent_code.unsqueeze(1).expand(-1, centers.size(1), -1)        
+        x = torch.cat([centers, latent_code_expanded], dim=2)  # [1, B, 63+lat_dim]
+        x = x.squeeze()
+        for layer in self.layers:
+            x = layer(x)
+        dskin = self.bone_head(x)
+        return dskin
 
 def get_embedder(multires, input_dims=3):
     embed_kwargs = {

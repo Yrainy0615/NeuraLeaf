@@ -131,9 +131,12 @@ class LbsDataset(Dataset):
         self.resolution = resolution    
         self.grid_points = gutils.create_grid_points_from_bounds(mini, maxi, resolution)
         self.transform = False
+        self.all_deform.sort()
+        # add a extra data to all_deform in the first position
+        # self.all_deform.insert(0, "dataset/deformation_cvpr/deform_shape/deformed_raw_0.obj")
     
     def __len__(self):
-        return len(self.all_deform)
+        return 1
     
     def __getitem__(self, idx):
         deform_file = self.all_deform[idx]
@@ -141,16 +144,21 @@ class LbsDataset(Dataset):
         basename = deform_file.split('/')[-1].split('.')[0]
         canonical_idx = basename.split('_')[0]
         canonical_file = os.path.join(self.root_dir, f'{canonical_idx}_canonical.obj')
+        # if idx == 0:
+        #     canonical_file = "dataset/deformation_cvpr/base_shape/base_0.obj"
         canonical_mesh = load_obj(canonical_file)
-        canonical_points = canonical_mesh.verts_packed()
+        canonical_points = canonical_mesh[0]
         occ_canonical = gutils.points_to_occ(self.grid_points, canonical_points, res=self.resolution)
+        deformed_points = deform_mesh[0]
         data_dict = {
-            'canonical_mesh': canonical_mesh,
-            'deform_mesh': deform_mesh,
+            'canonical_points': canonical_points,
+            'deform_points': deformed_points,
             'occ_canonical': occ_canonical,
             'idx': idx
         }
         return data_dict
+    def get_loader(self, batch_size, shuffle=False):
+        return DataLoader(self, batch_size=batch_size, shuffle=shuffle)
         
 
         

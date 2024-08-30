@@ -13,8 +13,9 @@ import trimesh
 from pytorch3d.io import load_obj
 from pytorch3d.loss import chamfer_distance
 
+
 class NBS():
-    def __init__(self, opts, canonical_pts:torch.tensor,mlp_G=None, mlp_J=None):
+    def __init__(self, opts):
         """
         bone: ...,B,10  -B gaussian ellipsoids
         pts: bs,N,3  -N points
@@ -25,17 +26,16 @@ class NBS():
         """
         self.latent_lbs = None
         self.bone = None 
-        self.mlp_G = mlp_G
-        self.mlp_J = mlp_J
-        self.rts = None 
+        self.mlp_rts = None
         self.num_bones = opts['num_bones']
         self.skin_aux = None
         self.dskin = None
         self.opts = opts
         self.rts_fw = None 
-        self.canonical_pts = canonical_pts.unsqueeze(0)
-        self.intitialize(self.canonical_pts)
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.skin_aux = torch.Tensor([0, 2])  
+
+        # self.intitialize(self.canonical_pts)
+        # self.device = "cuda" if torch.cuda.is_available() else "cpu"
     
     def intitialize(self, pts):
         self.generate_bone(pts)
@@ -54,8 +54,11 @@ class NBS():
                 {'params': [self.dskin],'lr': 0.01}
              ]
         )
-        
     
+    def bone_prior(self, pts,num_bones):
+        random_idx = torch.randint(0, pts.shape[1], (num_bones,))
+        center = pts[:,random_idx]
+        return center
     def generate_bone(self, pts, vis=False):
         """
         pts(canonical): bs,N,3 
@@ -89,43 +92,38 @@ class NBS():
         
         pass
     
-    def warp_fw(self,pts, epoch):
+    def warp_fw(self,pts, bone,):
         """
         canonical shape -> deformed shape
         """
-        bone_canonical = self.bone
-        for i in range(epoch):
-            self.optimizer.zero_grad()
-            # skinning matrix
-            skin_fw = self.skinning(bone_canonical, self.canonical_pts, dskin=self.dskin, skin_aux=self.skin_aux)
-            # lbs 
-            deformed_pred, bones_dfm = self.lbs(bone_canonical, self.rts_fw.unsqueeze(0), skin_fw, backward=False)
-            loss_chamfer = chamfer_distance(deformed_pred, pts.unsqueeze(0))[0]
-            print(f"Epoch {i}, Loss: {loss_chamfer}")
-            loss_chamfer.backward()
-            self.optimizer.step()
-            deformed_mesh = trimesh.PointCloud(deformed_pred[0].detach().cpu().numpy())
-            if i%10==0:
-                save_dir = f"results/deform/lbs_test/{self.num_bones}bones"
-                if not os.path.exists(save_dir):
-                    os.makedirs(save_dir)
-                deformed_mesh.export(os.path.join(save_dir, f"deformed_{i}_maple.ply"))
+        bone_canonical = bone
+        self.optimizer.zero_grad()
+        # skinning matrix
+        skin_fw = self.skinning(bone_canonical, self.canonical_pts, dskin=self.dskin, skin_aux=self.skin_aux)
+        # lbs 
+        deformed_pred, bones_dfm = self.lbs(bone_canonical, self.rts_fw.unsqueeze(0), skin_fw, backward=False)
+
+        # if i%10==0:
+        #     save_dir = f"results/deform/lbs_test/{self.num_bones}bones"
+        #     if not os.path.exists(save_dir):
+        #         os.makedirs(save_dir)
+        #     deformed_mesh.export(os.path.join(save_dir, f"deformed_{i}_maple.ply"))
         
         
         return deformed_pred, bones_dfm
         
         
-    def lbs(self,bones,rts_fw,skin,backward=False):
+    def lbs(self,bones,pts,rts_fw,skin,backward=False):
         """
         bones: bs,B,10       - B gaussian ellipsoids indicating rest bone coordinates
         rts_fw: bs,B,12       - B rigid transforms, applied to the rest bones
         xyz_in: bs,N,3       - N 3d points after transforms in the root coordinates
         """
         B = bones.shape[-2]
-        N = self.canonical_pts.shape[-2]
+        N = pts.shape[-2]
         bs = rts_fw.shape[0]
         bones = bones.view(-1,B,10)
-        xyz_in = self.canonical_pts.view(-1,N,3)
+        xyz_in = pts.view(-1,N,3)
         # rts_fw = rts_fw.view(-1,B,12)# B,12
         # rmat=rts_fw[:,:,:9]
         # rmat=rmat.view(bs,B,3,3)
@@ -150,7 +148,7 @@ class NBS():
         skin: bs,N,B   - skinning matrix
         apply rts to bone coordinates, while computing blending globally
         """
-        chunk=4096
+        chunk=pts.shape[1]
         B = rts.shape[-3]
         N = pts.shape[-2]
         bones = bones.view(-1,B,10)
@@ -194,7 +192,7 @@ class NBS():
         pts: bs,N,3    - N 3d points
         skin: bs,N,B   - skinning matrix
         """
-        chunk=4096
+        chunk=pts.shape[1]
         bs,N,_ = pts.shape
         B = bones.shape[-2]
         if bones.dim()==2: bones = bones[None].repeat(bs,1,1)
@@ -206,14 +204,13 @@ class NBS():
                 dskin_chunk = None
             else: 
                 dskin_chunk = dskin[i:i+chunk]
-            skin_chunk = self.skinning_chunk(bones[i:i+chunk], pts[i:i+chunk], \
+            skin_chunk = self.skinning_chunk(bones[i:i+chunk], pts[:,i:i+chunk], \
                                 dskin=dskin_chunk, skin_aux=skin_aux)
             skin.append( skin_chunk )
         skin = torch.cat(skin,0)
         return skin
 
     def skinning_chunk(self, bones, pts, dskin=None, skin_aux=None):
-    #def skinning(bones, pts, dskin=None, skin_aux=None):
         """
         bone: bs,B,10  - B gaussian ellipsoids
         pts: bs,N,3    - N 3d points, usually N=num points per ray, b~=2034

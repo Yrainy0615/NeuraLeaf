@@ -1,2 +1,33 @@
 NBS:
-  num_bones: 1000
+  num_bones: 500
+  lat_dim: 128
+
+Deform:
+  Z_DIM: 128
+  decoder_hidden_dim: 256
+  decoder_out_dim: 3
+  decoder_nlayers: 8
+  
+
+Trainer:
+  batch_size: 1
+  num_epochs: 300
+  vis_interval: 50
+  LR_E: 0.0005
+  LR_D: 0.0095 # 0.01
+  LR_LAT: 0.001
+  ckpt_interval: 50
+  lr_decay_interval_lat: 50
+  lr_decay_factor_lat: 0.5
+  START_TRAIN_AT_IMG_SIZE: 8
+  save_result: results/deform/train
+  test_result: results/deform/test
+  checkpoint_path: checkpoints/deform/nbs
+  save_name: nbs
+
+  lambdas:
+    chamfer: 1.0
+    lat_reg: 0.01
+    chamfer_bone: 1.0
+    lat_reg_def: 0.01
+
