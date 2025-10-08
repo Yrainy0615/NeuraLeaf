@@ -167,7 +167,7 @@ class SDF2D:
             offset = 127.5
             self.post_process_sdf(self.bit_pic_white, self.bit_pic_black, self.num, coefficient, offset)
             if output:
-                # cv2.imwrite(self.output_filename('_sdf'), self.output_pic.to_numpy())
+                cv2.imwrite(self.output_filename('_sdf'), self.output_pic.to_numpy())
                 return self.output_pic.to_numpy()
         else:  # no normalization
             if output:
@@ -272,11 +272,11 @@ class MultiSDF2D:
 
 
 if __name__ == "__main__":
-    root_dir = 'dataset/2D_Datasets/canonical_mask'
+    root_dir = 'dataset/cvpr_final/base_mask_extra'
     mask_files = []
     for dirpath, dirnames, filenames in os.walk(root_dir):
-        for filename in [f for f in filenames if f.endswith(".jpg")]:
-            save_name = filename.replace('.jpg', '_sdf.npy')
+        for filename in [f for f in filenames if f.endswith(".png") and 'mask' in f]:
+            save_name = filename.replace('.png', '_sdf.npy')
             save_dir = os.path.join(dirpath, 'sdf')
             if not os.path.exists(os.path.join(save_dir, save_name)):
                 mySDF2D = SDF2D(os.path.join(dirpath, filename))

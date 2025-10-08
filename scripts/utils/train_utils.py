@@ -5,17 +5,14 @@ import math
 import wandb
 
 class BaseTrainer(object):
-    def __init__(self, decoder, cfg, device, args):
+    def __init__(self, decoder,dataset, cfg, device, args):
         self.decoder = decoder
         self.args = args
-        self.mode = args.mode
-        assert self.mode in ['train', 'eval']
         self.cfg = cfg['Training']
         self.device = device
-        self.dataset = None
-        self.dataloader = None
-        self.optim = None
 
+        self.optim = None
+        self.dataset = dataset
         
 
         

@@ -3,6 +3,7 @@ from pytorch3d import transforms
 import torch
 import torch.nn as nn
 import sys
+import cv2
 import os
 current_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(current_dir) 
@@ -10,9 +11,31 @@ sys.path.insert(0, parent_dir)
 from utils import geom_utils as gutils
 import yaml
 import trimesh
-from pytorch3d.io import load_obj
-from pytorch3d.loss import chamfer_distance
+from pytorch3d.io import load_obj, load_ply, load_objs_as_meshes
+from pytorch3d.loss import chamfer_distance, mesh_edge_loss, mesh_laplacian_smoothing
+from pytorch3d.transforms import quaternion_to_matrix
+from pytorch3d.structures import Meshes
+import skimage.morphology as morphology
+import networkx as nx
+from matplotlib import pyplot as plt
+import matplotlib
+matplotlib.use('Agg')  # Use a non-interactive backend
 
+
+
+def create_ellipsoid(center, radii, rotation):
+    u = np.linspace(0, 2 * np.pi, 100)
+    v = np.linspace(0, np.pi, 100)
+    x = radii[0] * np.outer(np.cos(u), np.sin(v))
+    y = radii[1] * np.outer(np.sin(u), np.sin(v))
+    z = radii[2] * np.outer(np.ones_like(u), np.cos(v))
+    
+    # Rotate the points
+    for i in range(len(x)):
+        for j in range(len(x)):
+            [x[i,j], y[i,j], z[i,j]] = np.dot([x[i,j], y[i,j], z[i,j]], rotation) + center
+    
+    return x, y, z
 
 class NBS():
     def __init__(self, opts):
@@ -24,8 +47,8 @@ class NBS():
         dskin: bs,N,B - delta skinning matrix
 
         """
+        self.vein_file = 'dataset/template_vein.png'
         self.latent_lbs = None
-        self.bone = None 
         self.mlp_rts = None
         self.num_bones = opts['num_bones']
         self.skin_aux = None
@@ -33,12 +56,16 @@ class NBS():
         self.opts = opts
         self.rts_fw = None 
         self.skin_aux = torch.Tensor([0, 2])  
+        self.canonical_points = None
+        self.bone = None
+        self.bone_center = None
 
-        # self.intitialize(self.canonical_pts)
         # self.device = "cuda" if torch.cuda.is_available() else "cpu"
     
     def intitialize(self, pts):
-        self.generate_bone(pts)
+        # self.generate_bone(pts)
+        self.generate_bone_from_vein(self.vein_file)
+        self.canonical_points = pts
         self.dskin = torch.zeros(pts.shape[0], pts.shape[1], self.num_bones)
         R_init = torch.eye(3).repeat(self.num_bones,1,1)
         t_init = torch.zeros(self.num_bones,3,1)
@@ -54,54 +81,147 @@ class NBS():
                 {'params': [self.dskin],'lr': 0.01}
              ]
         )
-    
-    def bone_prior(self, pts,num_bones):
-        random_idx = torch.randint(0, pts.shape[1], (num_bones,))
-        center = pts[:,random_idx]
-        return center
-    def generate_bone(self, pts, vis=False):
+    @staticmethod     
+    def farthest_point_sampling(pts, K):
         """
-        pts(canonical): bs,N,3 
-        PCA for initial bone estimation of canonical shape
+        farthest point sampling
+        pts: Tensor - bs, N, 3
+        K: int - number of points to sample
         """
-        bs,N,_ = pts.shape
-  
-        # PCA
-        pts_mean = pts.mean(dim=1, keepdim=True)
-        pts_centered = pts - pts_mean
-        # random select n points
-        random_idx = torch.randint(0, N, (self.num_bones,))
-        center = pts[:,random_idx,:]
-        # center =  torch.linspace(-1, 1, self.num_bones)
-        # center =torch.meshgrid(center, center, center)
-        # center = torch.stack(center,0).permute(1,2,3,0).reshape(-1,3)
-        # center = center[:num_bones]
-        # U, S, V = torch.svd(pts_centered)
-        # center = U[:,:self.num_bones]
-        # other parameters
-        orient = torch.Tensor([1,0,0,0])
-        orient = orient.repeat(self.num_bones,1)
-        scale = torch.zeros(self.num_bones,3)
-        bone = torch.cat([center.squeeze(),orient,scale],-1)
-        if vis:
-            gutils.vis_points(bone.squeeze())
-        self.bone = nn.Parameter(bone.unsqueeze(0))
-    
+        if len(pts.shape)==2:
+            pts = pts.unsqueeze(0)
+        bs, N, _ = pts.shape
+        centroids = torch.zeros(bs, K, dtype=torch.long).to(pts.device)
+        distance = torch.ones(bs, N).to(pts.device) * 1e10
+        farthest = torch.randint(0, N, (bs,), dtype=torch.long).to(pts.device)
+        batch_indices = torch.arange(bs).to(pts.device)
+
+        for i in range(K):
+            centroids[:, i] = farthest
+            centroid = pts[batch_indices, farthest, :].view(bs, 1, 3)
+            dist = torch.sum((pts - centroid) ** 2, -1)
+            mask = dist < distance
+            distance[mask] = dist[mask]
+            farthest = torch.max(distance, -1)[1]
+            
+        return pts[batch_indices, centroids]
+
+    def generate_bone(self, pts=None,num_bone=1000,vis=False):
+        # sample in uv space ,img_size =512*512, uniformly sample 1000 points as center 
+        if pts is None:
+            U = np.random.uniform(-1, 1, num_bone)
+            V = np.random.uniform(-1, 1, num_bone)
+
+            points_uv = np.stack((U, V), axis=-1)  # Shape: (1000, 2)  
+            points_3d = np.zeros((num_bone, 3))
+            points_3d[:, 2] = 0
+            points_3d[:, 0] = points_uv[:, 0] 
+            points_3d[:, 1] = points_uv[:, 1]    
+            # move points to uv center 
+            center = torch.tensor(points_3d - np.mean(points_3d, axis=0))
+            orient = torch.Tensor([1,0,0,0]).repeat(num_bone,1)
+            scale = torch.ones(num_bone, 3)
+            scale = scale * 0.0001
+            bone = torch.cat([center.squeeze(), orient, scale], dim=-1)
+            return torch.tensor(bone.float())
+            
+        else:
+            if len(pts.shape)==2:
+                pts = torch.tensor(pts).unsqueeze(0).float()
+            b, N,_ = pts.shape
+            center = self.farthest_point_sampling(pts, self.num_bones)
+            # center = pts
+            orient = torch.Tensor([1,0,0,0]).repeat(self.num_bones,1).to(pts.device)
+            scale = torch.ones(self.num_bones, 3).to(pts.device)
+            scale = scale * 0.01
+            bone = torch.cat([center.squeeze(), orient, scale], dim=-1)
+            if vis:
+                gutils.vis_points(bone.squeeze())
+            self.bone_center = bone[:,:3].unsqueeze(0).requires_grad_(False)
+            # concat center and partial bone
+            self.bone =nn.Parameter(bone.unsqueeze(0)).requires_grad_(True)
+            return bone
+
+
+        
+    def visualize_bone(self, mesh, bone:torch.Tensor=None, save_path=None):
+        """
+        bone: B * 10  
+        mesh: pytorch3d mesh
+        """
+        center = bone[0,:, :3]
+        quat = bone[0,:, 3:7]
+        scale = bone[0,:, 7:]
+        # quat to rotation matrix
+        rot  = quaternion_to_matrix(quat)
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+
+        for i in range(self.num_bones):
+            x, y, z = create_ellipsoid(center[i].detach().cpu().numpy(), scale[i].detach().cpu().numpy(), rot[i].detach().cpu().numpy())
+            ax.plot_surface(x, y, z, color='b', alpha=0.4)
+        # add mesh to plot
+        verts = mesh[0].detach().cpu().numpy()
+        faces = mesh[1][0].detach().cpu().numpy()
+        ax.plot_trisurf(verts[:,0], verts[:,1], faces, verts[:,2], cmap='viridis', edgecolor='red')
+        if save_path is not None:
+            plt.savefig(save_path)
+        else:
+            plt.savefig("bone.png")  # 保存图像
+        plt.close()
+
+    def generate_bone_from_vein(self):
+        vein = cv2.imread(self.vein_file)
+        # graph 
+        # G=nx.Graph()
+        # for joint in joints:
+        #     G.add_nodes_from(joint)
+        
+        # for joint in joints:
+        #     neighbors = self.get_neighbors(joint, joints)
+        #     for neighbor in neighbors:
+        #         G.add_edges_from(joint, neighbor)
+        
+        # sample points from vein mask
+        vein_points = np.argwhere(vein[:,:,0]>0)
+        # expand 2d -> 3d。 z=0
+        vein_points = np.concatenate([vein_points, np.zeros((vein_points.shape[0],1))], axis=1)
+        # vein_points = vein_points[np.random.choice(vein_points.shape[0], self.num_bones)]
+        vein_points = self.farthest_point_sampling(torch.tensor(vein_points).float(), self.num_bones)
+        # change vein points to bone points (uv coordinate)
+        bone_points_x = vein_points[:,:,1] / vein.shape[1]
+        bone_points_y = vein_points[:,:,0] / vein.shape[0]
+        bone_points_z = vein_points[:,:,2]
+        bone_points = np.stack([bone_points_x, bone_points_y,bone_points_z], axis=2)
+        bone_points = torch.tensor(bone_points).float()
+        # mv bone points to uv center
+        bone_points = bone_points - torch.mean(bone_points, dim=1)
+        # visualize bone on base shape
+        bone = self.generate_bone(bone_points)
+        return bone
+
+    @staticmethod
+    def get_neighbors(point, points):
+        # get the nearest neighbor of a point 
+        dist = np.linalg.norm(points - point, axis=1)
+        idx = np.argsort(dist)
+        return points[idx[0]]
+
     def warp_bw(self,pts):
         bone_rst = self.bone
         
         pass
     
-    def warp_fw(self,pts, bone,):
+    def warp_fw(self):
         """
         canonical shape -> deformed shape
         """
-        bone_canonical = bone
+        bone_canonical = self.bone
         self.optimizer.zero_grad()
         # skinning matrix
-        skin_fw = self.skinning(bone_canonical, self.canonical_pts, dskin=self.dskin, skin_aux=self.skin_aux)
+        skin_fw = self.skinning(bone_canonical, self.canonical_points, dskin=self.dskin, skin_aux=self.skin_aux)
         # lbs 
-        deformed_pred, bones_dfm = self.lbs(bone_canonical, self.rts_fw.unsqueeze(0), skin_fw, backward=False)
+        deformed_pred, bones_dfm = self.lbs(bone_canonical, self.canonical_points,self.rts_fw.unsqueeze(0), skin_fw, backward=False)
 
         # if i%10==0:
         #     save_dir = f"results/deform/lbs_test/{self.num_bones}bones"
@@ -122,7 +242,7 @@ class NBS():
         B = bones.shape[-2]
         N = pts.shape[-2]
         bs = rts_fw.shape[0]
-        bones = bones.view(-1,B,10)
+        bones = bones.view(-1,B,bones.shape[-1])
         xyz_in = pts.view(-1,N,3)
         # rts_fw = rts_fw.view(-1,B,12)# B,12
         # rmat=rts_fw[:,:,:9]
@@ -132,15 +252,16 @@ class NBS():
         # rts_fw = rts_fw.view(-1,B,3,4)
 
         if backward:
-            bones_dfm = self.bone_transform(bones, rts_fw) # bone coordinates after deform
+            # bones_dfm = self.bone_transform(bones, rts_fw) # bone coordinates after deform
             rts_bw = gutils.rts_invert(rts_fw)
-            xyz = self.blend_skinning(bones_dfm, rts_bw, skin, xyz_in)
+            xyz = self.blend_skinning(bones, rts_bw, skin, xyz_in)
+            bones_dfm = gutils.bone_transform(bones, rts_bw) # bone coordinates after deform
         else:
-            xyz = self.blend_skinning(bones.repeat(bs,1,1), rts_fw, skin, xyz_in)
-            bones_dfm = gutils.bone_transform(bones, rts_fw) # bone coordinates after deform
-        return xyz, bones_dfm
+            xyz = self.blend_skinning(bones.repeat(bs,1,1),rts= rts_fw, skin=skin,pts=xyz_in)
+            # bones_dfm = gutils.bone_transform(bones, rts_fw) # bone coordinates after deform
+        return xyz
     
-    def blend_skinning(self, bones,rts,skin,pts):       
+    def blend_skinning(self, bones,skin,rts,pts):       
         """
         bone: bs,B,10   - B gaussian ellipsoids
         rts: bs,B,3,4   - B ririd transforms, applied to bone coordinates
@@ -151,7 +272,7 @@ class NBS():
         chunk=pts.shape[1]
         B = rts.shape[-3]
         N = pts.shape[-2]
-        bones = bones.view(-1,B,10)
+        bones = bones.view(-1,B,bones.shape[-1])
         pts = pts.view(-1,N,3)
         rts = rts.view(-1,B,3,4)
         bs = pts.shape[0]
@@ -243,31 +364,51 @@ class NBS():
 
         skin = mdis.softmax(2)
         return skin
+    
+    def optimize_single(self,epoch,target, base_face):
+        for i in range(epoch):
+            deformed_pred, bones_dfm = self.warp_fw()
+            deformed_mesh_torch = Meshes(verts=deformed_pred, faces=base_face)
+            loss_chamfer = chamfer_distance(deformed_pred, target)[0]
+            loss_edge = mesh_edge_loss(deformed_mesh_torch)
+            loss_smooth = mesh_laplacian_smoothing(deformed_mesh_torch)
+            loss = loss_chamfer + loss_edge + loss_smooth
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            with torch.no_grad():  
+                self.bone[:,:,:3] = self.bone_center
+            print(f"Epoch {i}, Loss: {loss.item()}")
+            if i%20==0:
+                deformed_cloud = trimesh.Trimesh(deformed_pred[0].detach().cpu().numpy(), base_face[0].detach().cpu().numpy())
+                deformed_cloud.export(f"results/deform/lbs/lbs_test/deformed_{i}_leaf2.ply")
+            # update learning rate
+            if i%100==0 and i!=0:
+                for param_group in self.optimizer.param_groups:
+                    param_group['lr'] = param_group['lr'] * 0.5
+        self.visualize_bone(self.canonical_mesh, self.bone, save_path="results/deform/lbs/lbs_test/bone.png")
+
 
 if __name__ == '__main__':
     # load data
-    canonical_file = "dataset/deformation_eccv/maple4_d1_aligned.obj"
-    deformed_file = "dataset/deformation_eccv/maple4_d8_aligned.obj"
+    canonical_file = "dataset/template.obj"
+    deformed_file = "dataset/deformation_cvpr_new/deform_train/leaf_2_deform.ply"
+    vein = 'dataset/2D_Datasets/leaf_vein_new/vein_train/C_1_1_3_bot.png'
     opts_file = "scripts/configs/deform.yaml"
     cfg = yaml.load(open(opts_file, 'r'), Loader=yaml.FullLoader)
-    canonical_mesh = load_obj(canonical_file)
-    deformed_mesh = load_obj(deformed_file)
-    canonical_points = canonical_mesh[0]
-    deformed_points = deformed_mesh[0]
+    # canonical_mesh = load_obj(canonical_file)
+    # deformed_mesh = load_obj(deformed_file)
+    # canonical_points = canonical_mesh[0]
+    # deformed_points = deformed_mesh[0]
     
     # load model
-    nbs_model = NBS(cfg['NBS'], canonical_points)
-    
-    # forward
-    deformed_pred, bones_dfm = nbs_model.warp_fw(deformed_points, epoch=100)
-    """
-    TO-DO:
-    1. add surface constraint during optimization
-    2. optimization -> training 
-    3. learn latent space
-    4. neuralbs + displacement field 
-    """
-    
-    pass
+    nbs_model = NBS(cfg['NBS'])
+    canonical_mesh = load_obj(canonical_file)
+    canonical_points = canonical_mesh[0].unsqueeze(0)
+    canonical_face = canonical_mesh[1][0].unsqueeze(0)
+    deformed_mesh = load_ply(deformed_file)
+    deformed_points = deformed_mesh[0].unsqueeze(0)
+    nbs_model.intitialize(canonical_points)
+    nbs_model.optimize_single(200, deformed_points,canonical_face)
 
-    
+        

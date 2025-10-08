@@ -10,6 +10,7 @@ import math
 from torchvision.utils import make_grid, save_image
 from pytorch3d.structures import Meshes
 from pytorch3d.io import IO
+import pymeshlab
 import sys
 sys.path.append('scripts')
 from data.mask_sdf import SDF2D
@@ -55,59 +56,91 @@ def sdf_to_mask(sdf:torch.Tensor,k:float=1):
     return mask
 
 
-def mask_to_mesh(masks:torch.tensor, save_mesh=False):
+def mask_to_mesh(masks:torch.tensor, shape_idx,save_mesh=False,save_folder ='results/cvpr/generation'):
     # list for store pytorch3d meshes
+    os.makedirs(save_folder,exist_ok=True)
+    if masks.dim() == 3 and masks.shape[0] == 1:
+        masks = masks.unsqueeze(0)
+    elif masks.dim() == 3 and masks.shape[0] > 1:
+        masks = masks.unsqueeze(1)
     assert masks.dim() == 4, "masks should be 4D tensor"
     verts_list = []
     faces_list = []
-    for mask in masks:
+    for i,mask in enumerate(masks):
         if mask.min() < 0:  
             mask = (mask+1)
         mask = mask[0]
-        mask_numpy = mask.cpu().numpy()
+        mask_numpy = mask.detach().cpu().numpy()
         y, x = np.nonzero(mask_numpy > 0)
         y_uv = y / mask_numpy.shape[0]
         x_uv = x / mask_numpy.shape[1]
         z = np.zeros_like(x)
         verts = np.stack([x_uv, y_uv, z],axis=-1).reshape(-1,3)
+        # verts = verts - verts.mean(axis=0)
         pc = mn.pointCloudFromPoints(verts)
-        pc.validPoints = mm.pointUniformSampling(pc, 1e-3)
+        # pc.validPoints = mm.pointUniformSampling(pc, 1e-2)
+        pc.invalidateCaches()
         mesh = mm.triangulatePointCloud(pc)
-        # mesh = mm.offsetMesh(mesh, 0.1)
+
         out_faces = mn.getNumpyFaces(mesh.topology)
+        verts = mn.getNumpyVerts(mesh)
+        # mesh_save = trimesh.Trimesh(verts, out_faces, process=False)
         verts_list.append(verts)
         faces_list.append(out_faces)
+        if type(shape_idx) == int:
+            shape_idx = [shape_idx]
+        if save_mesh:
+            current_mesh = Meshes(verts=[torch.tensor(verts).float()], faces=[torch.tensor(out_faces).long()])
+            IO().save_mesh(current_mesh, os.path.join(save_folder,f'base_{shape_idx[i]}.obj'))
     mesh_pytorch3d = Meshes(verts=[torch.tensor(verts).float() for verts in verts_list], faces=[torch.tensor(faces).long() for faces in faces_list])
-    mesh_pytorch3d = mesh_pytorch3d.to(masks.device)
-    # save one mesh for test 
-    mesh1 = mesh_pytorch3d[0]
-    if save_mesh:
-        IO().save_mesh(mesh1, "mesh1.obj")
+
     return mesh_pytorch3d
         
-def mask_to_mesh_distancemap(mask_file:str):
+def mask_to_mesh_distancemap(mask_file:str,mode='nparray'):
     # get folder dir of maskfile
     mask_dir = os.path.dirname(mask_file) 
+    mask =cv2.imread(mask_file, cv2.IMREAD_GRAYSCALE)/255
     sdf_name = os.path.basename(mask_file).split(".")[0]
-    sdf_path = os.path.join(mask_dir,'output' ,sdf_name+'_sdf.jpg')
-    if not os.path.exists(sdf_path):
-        mySDF2D = SDF2D(mask_file)              
-
+    sdf_path = os.path.join(mask_dir,'output' ,sdf_name+'_sdf.png')
+    if mode == 'distance_map':
+        if not os.path.exists(sdf_path):
+            mySDF2D = SDF2D(mask_file)              
+            sdf_img = mySDF2D.mask2sdf()
     
-    distance_map = mm.loadDistanceMapFromImage(mm.Path(sdf_path), 0)
-    polyline2 = mm.distanceMapTo2DIsoPolyline(distance_map, isoValue=127.5)
+        distance_map = mm.loadDistanceMapFromImage(mm.Path(sdf_path), 0)
+        polyline2 = mm.distanceMapTo2DIsoPolyline(distance_map, isoValue=12)
 
-    # Create an empty HolesVertIds object if there are no holes
-    holes_vert_ids = mm.HolesVertIds()
+        # Create an empty HolesVertIds object if there are no holes
+        holes_vert_ids = mm.HolesVertIds()
 
-    # Call contours2 with the required argument
-    contours = polyline2.contours2(holes_vert_ids)
+        # Call contours2 with the required argument
+        contours = polyline2.contours2(holes_vert_ids)
 
-    # Compute the triangulation inside the contour
-    mesh = mm.triangulateContours(contours)
-    props = mm.SubdivideSettings()
-    props.maxDeviationAfterFlip = 0.5
-    mm.subdivideMesh(mesh,props)
+        # Compute the triangulation inside the contour
+        mesh = mm.triangulateContours(contours)
+    elif mode == 'nparray':
+        y_indices, x_indices = np.where(mask == 1)
+        z_coords = np.zeros_like(x_indices)
+        u_coords = x_indices / mask.shape[1]
+        v_coords = (y_indices / mask.shape[0])
+        verts = np.stack([u_coords, v_coords, z_coords], axis=-1)
+        # random sample 15000 points
+        idx = np.random.choice(verts.shape[0], 15000, replace=False)
+        verts = verts[idx]
+        # move mean to  origin
+        center = verts.mean(axis=0)
+        verts -= center
+        pc =mn.pointCloudFromPoints(verts)
+        
+        pc.validPoints = mm.pointUniformSampling(pc, 1e-3)
+        pc.invalidateCaches()
+        mesh = mm.triangulatePointCloud(pc)
+        # simplify mesh
+        # mesh.meshing_decimation_clustering()
+        # mesh = mm.offsetMesh(mesh, 0.0)
+    # props = mm.SubdivideSettings()
+    # props.maxDeviationAfterFlip = 0.5
+    # mm.subdivideMesh(mesh,props)
     verts = mn.getNumpyVerts(mesh)
     faces = mn.getNumpyFaces(mesh.topology)
     mesh_torch3d = Meshes(verts=[torch.tensor(verts).float()], faces=[torch.tensor(faces).long()])
@@ -115,11 +148,11 @@ def mask_to_mesh_distancemap(mask_file:str):
     # sdf = image_to_sdf(sdf_img)
     
 
-def save_tensor_image(tensor,path):
-    grid  = make_grid(tensor, n_row=int(math.sqrt(tensor.shape[0])), normalize=True)
+def save_tensor_image(tensor,path,normalize=True):
+    grid  = make_grid(tensor.float(), n_row=int(math.sqrt(tensor.shape[0])), normalize=True)
     if not os.path.exists(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
-    save_image(grid, path)
+    save_image(grid, path,normalize=normalize)
 
 def denormalize(tensor, mean=0.5,std=0.5):
     mean = torch.tensor(mean, dtype=tensor.dtype, device=tensor.device)

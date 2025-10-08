@@ -163,3 +163,5 @@ cython_debug/
 .mtl
 .png
 .jpg
+/vein_segmentation
+/debug

@@ -1,0 +1,41 @@
+shape_decoder:
+  decoder_lat_dim: 128
+  decoder_hidden_dim: 1024
+  decoder_nlayers: 8
+  decoder_out_dim: 1
+deform_decoder:
+  decoder_lat_dim: 128
+  decoder_hidden_dim: 1024
+  decoder_nlayers: 8
+  decoder_out_dim: 3
+encoder: null
+has_forward: true
+training:
+  save_path: checkpoints/deform
+  root_dir: dataset/ScanData
+  root_dir_color: dataset/LeafData
+  shape_path: checkpoints/2dShape/exp-cg-sdf__24000.tar
+  save_name: exp-deform-1
+  batch_size: 1
+  ckpt_interval: 1000
+  grad_clip: 0.025
+  grad_clip_lat: 0.025
+  npoints_decoder: 2000
+  npoints_decoder_non: 250
+  sigma_near: 0.001
+  weight_decay: 0.02
+  lambdas:
+    corresp: 500.0
+    lat_reg: 5.0e-05
+    loss_reg_zero: 0.0
+    loss_rgb: 0.01
+  lr: 0.01
+  lr_decay_factor: 0.2
+  lr_decay_factor_lat: 0.2
+  lr_decay_interval: 1000
+  lr_decay_interval_lat: 1000
+  lr_lat: 0.005
+  shape_ckpt: 10000
+  shape_exp_name: SHAPE_EXP_NAME
+  sigma_near: 0.01
+  weight_decay: 1.0e-05

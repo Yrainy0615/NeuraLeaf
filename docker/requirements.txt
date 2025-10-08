@@ -28,3 +28,5 @@ probreg==0.3.8
 dominate==2.9.1
 visdom==0.2.4
 torch_fidelity==0.3.0
+pyrender==0.1.45
+pymeshlab==2023.12.post1

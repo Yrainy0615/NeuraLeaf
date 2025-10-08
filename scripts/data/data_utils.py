@@ -176,6 +176,7 @@ class data_processor():
         pass
         
 
+
 if __name__ == "__main__":
     root = 'dataset/2D_Datasets'
     processor = data_processor(root)

@@ -15,27 +15,33 @@ from scripts.utils.utils import save_tensor_image
 
 
 class BaseTrainer(object):
-    def __init__(self, decoder, cfg, device, args):
+    def __init__(self, decoder, cfg, checkpoint,device, args):
         self.decoder = decoder
         self.args = args
         self.mode = args.mode
+        shape_code = checkpoint['latent_shape']['weight']
+        k = checkpoint['k']
         assert self.mode in ['train', 'eval']
         self.cfg = cfg['Training']
         self.device = device
         self.dataset = BaseShapeDataset(self.cfg['data_dir'], self.cfg['n_sample'])
         self.dataloader = self.dataset.get_loader(batch_size=self.cfg['batch_size'], shuffle=True)
         self.latent_shape = torch.nn.Embedding(len(self.dataset), cfg['Base']['Z_DIM'], max_norm=1, device=device)
-        self.k = torch.nn.Parameter(torch.tensor(1.0)).requires_grad_(True)
+        # use pretrained shape code
+
+        self.k = torch.nn.Parameter(k).requires_grad_(True)
         self.optim_decoder = optim.Adam(self.decoder.parameters(), lr=self.cfg['LR_D'], betas=(0.0, 0.999))
         # self.optim_k = optim.Adam([self.k], lr=self.cfg['LR_D'], betas=(0.0, 0.999))
         torch.nn.init.normal_(self.latent_shape.weight.data, 0.0, 0.1/math.sqrt(cfg['Base']['Z_DIM']))
         self.optim_latent = optim.Adam(self.latent_shape.parameters(), lr=self.cfg['LR_LAT'], betas=(0.0, 0.999))
-        self.optim_k = optim.Adam([self.k], lr=0.01, betas=(0.0, 0.999))
+        self.optim_k = optim.Adam([self.k], lr=0.001, betas=(0.0, 0.999))
         
-
-        
-    def load_checkpoint(self):
-        pass
+    def load_checkpoint(self, file):
+        checkpoint_base = torch.load(file)
+        self.decoder.load_state_dict(checkpoint_base['decoder'])
+        self.decoder.eval()
+        self.k = checkpoint_base['k']
+        self.k.requires_grad_(False)
         
     def reduce_lr(self, epoch):
         if   self.cfg['lr_decay_interval_lat'] is not None and epoch % self.cfg['lr_decay_interval_lat'] == 0:
@@ -44,12 +50,15 @@ class BaseTrainer(object):
             print('Reducting LR for latent codes to {}'.format(lr))
             for param_group in self.optim_latent.param_groups:
                 param_group["lr"] = lr
-            
+            for param_group in self.optim_k.param_groups:
+                param_group["lr"] = lr
+            for param_group in self.optim_decoder.param_groups:
+                param_group["lr"] = lr       
     
     def save_checkpoint(self, checkpoint_path, save_name):
         if not os.path.exists(checkpoint_path):
             os.makedirs(checkpoint_path)
-        save_name = os.path.join(checkpoint_path, save_name)
+        save_name = os.path.join(checkpoint_path, save_name+'.pth')
         torch.save({'decoder': self.decoder.state_dict(),
                     'latent_shape': self.latent_shape.state_dict(),
                     'optim_decoder': self.optim_decoder.state_dict(),
@@ -68,8 +77,33 @@ class BaseTrainer(object):
         save_image(grid.unsqueeze(1), os.path.join(save_folder, f'train_sample_{epoch}.png'))
         self.decoder.train()
 
-    def train_step_texture(self, batch):
-        pass
+    def train_extra_shape(self, batch):
+        self.load_checkpoint('checkpoints/cvpr/epoch_1000_base_deformleaf.pth.pth')
+        self.optim_latent.zero_grad()
+        batch_cuda = {k: v.to(device) for (k, v) in zip(batch.keys(), batch.values()) if torch.is_tensor(v)}
+        sdf_gt = batch_cuda['sdf']
+        mask_gt = batch_cuda['hint']
+        points = batch_cuda['points']
+        idx = batch_cuda['idx']
+        latent_shape = self.latent_shape(idx)
+        glob_cond = torch.cat([latent_shape.unsqueeze(1).expand(-1, points.shape[1], -1), points], dim=2)
+
+        # train decoder
+        sdf_pred = self.decoder(glob_cond)
+        loss_mse = F.mse_loss(sdf_pred.squeeze(), sdf_gt)
+        lat_reg = latent_shape.norm(2, dim=1).mean()
+        mask_pred  = latent_to_mask(latent_shape, decoder=self.decoder, size=128, k = self.k)
+        loss_mask = F.mse_loss(mask_pred, mask_gt)
+        loss_dict = {'loss_mse': loss_mse, 'lat_reg': lat_reg, 'loss_mask': loss_mask}
+        
+        loss_total = 0
+        for key in loss_dict.keys():
+            loss_total += loss_dict[key] * self.cfg['lambdas'][key]
+        loss_total.backward()
+        
+        self.optim_latent.step() 
+        loss_dict.update({'loss': loss_total.item()})
+        return loss_dict, mask_gt
 
     def train(self):
         loss = 0
@@ -86,18 +120,18 @@ class BaseTrainer(object):
             sum_loss_dict.update({'loss':0.0})
             for batch in self.dataloader:
 
-                loss_dict, mask_gt = self.train_step_shape(batch)
+                # loss_dict, mask_gt = self.train_extra_shape(batch)
+                loss_dict,mask_gt = self.train_extra_shape(batch)
 
-                loss_values = {key: value.item() if torch.is_tensor(value) else value for key, value in loss_dict.items()}    
-            if self.args.use_wandb:
-                wandb.log(loss_values)
+                # loss_values = {key: value.item() if torch.is_tensor(value) else value for key, value in loss_dict.items()}    
+
             for k in loss_dict:
                 sum_loss_dict[k] += loss_dict[k]
             if epoch % vis_interval == 0:
                 self.generate_examples(epoch, n=4)
                 save_tensor_image(mask_gt, os.path.join(self.cfg['save_result'], f'mask_gt_{epoch}.png'))
-            if epoch % ckpt_interval == 0 and epoch > 0:
-                self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=f'epoch_{epoch}_{save_name}.pth')
+            # if epoch % ckpt_interval == 0 and epoch > 0:
+            self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=f'extra_shape.pth')
             # print result
             n_train = len(self.dataloader)
             for k in sum_loss_dict:
@@ -107,8 +141,7 @@ class BaseTrainer(object):
                 printstr += "{}: {:.4f} ".format(k, sum_loss_dict[k])
             print(printstr)
             
-        self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name='latest_sigmoid.pth')
-            
+        # self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=self.cfg['save_name'])      
             
     def train_step_shape(self, batch):
         self.optim_decoder.zero_grad()
@@ -123,7 +156,7 @@ class BaseTrainer(object):
 
         # train decoder
         sdf_pred = self.decoder(glob_cond)
-        loss_mse = F.mse_loss(sdf_pred.squeeze(), sdf_gt)
+        loss_mse = F.mse_loss(sdf_pred.squeeze(-1), sdf_gt)
         lat_reg = latent_shape.norm(2, dim=1).mean()
         mask_pred  = latent_to_mask(latent_shape, decoder=self.decoder, size=128, k = self.k)
         loss_mask = torch.abs(mask_pred - mask_gt[:,0,:,:]).mean()
@@ -198,9 +231,11 @@ if __name__ == '__main__':
                          n_layers=CFG['Base']['decoder_nlayers'],
                          udf_type='sdf',
                          geometric_init=False) 
-    
+    checkpoint = torch.load('checkpoints/cvpr/epoch_1000_base_deformleaf.pth.pth')
+    decoder.load_state_dict(checkpoint['decoder'])
+
     # load trainer
-    trainer = BaseTrainer(decoder, CFG, device,args)
+    trainer = BaseTrainer(decoder, CFG, checkpoint,device,args)
     
     if args.mode == 'train':
         decoder.train()
