@@ -30,6 +30,7 @@ Training:
   test_result: results/baseshape
   checkpoint_path: checkpoints/cvpr
   save_name: base_deformleaf
+  log_dir: results/tensorboard/base_shape
 
 
   lambdas:

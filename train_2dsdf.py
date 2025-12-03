@@ -2,7 +2,6 @@ import torch
 import torch.optim as optim
 import argparse
 import os
-import wandb
 import yaml
 from scripts.data.dataset import BaseShapeDataset
 from torchvision.utils import save_image, make_grid
@@ -12,6 +11,8 @@ import math
 from scripts.models.decoder import SDFDecoder, UDFNetwork
 from torch.nn import functional as F
 from scripts.utils.utils import save_tensor_image
+from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
 
 
 class BaseTrainer(object):
@@ -35,6 +36,13 @@ class BaseTrainer(object):
         torch.nn.init.normal_(self.latent_shape.weight.data, 0.0, 0.1/math.sqrt(cfg['Base']['Z_DIM']))
         self.optim_latent = optim.Adam(self.latent_shape.parameters(), lr=self.cfg['LR_LAT'], betas=(0.0, 0.999))
         self.optim_k = optim.Adam([self.k], lr=0.001, betas=(0.0, 0.999))
+        
+        # Initialize TensorBoard writer
+        if args.use_tensorboard:
+            log_dir = os.path.join('logs', 'tensorboard', f"base_shape_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+            os.makedirs(log_dir, exist_ok=True)
+            self.writer = SummaryWriter(log_dir=log_dir)
+            self.global_step = 0
         
     def load_checkpoint(self, file):
         checkpoint_base = torch.load(file)
@@ -80,7 +88,7 @@ class BaseTrainer(object):
     def train_extra_shape(self, batch):
         self.load_checkpoint('checkpoints/cvpr/epoch_1000_base_deformleaf.pth.pth')
         self.optim_latent.zero_grad()
-        batch_cuda = {k: v.to(device) for (k, v) in zip(batch.keys(), batch.values()) if torch.is_tensor(v)}
+        batch_cuda = {k: v.to(self.device) for (k, v) in zip(batch.keys(), batch.values()) if torch.is_tensor(v)}
         sdf_gt = batch_cuda['sdf']
         mask_gt = batch_cuda['hint']
         points = batch_cuda['points']
@@ -102,7 +110,33 @@ class BaseTrainer(object):
         loss_total.backward()
         
         self.optim_latent.step() 
+        self.optim_k.step()
         loss_dict.update({'loss': loss_total.item()})
+        
+        # Log to TensorBoard
+        for key, value in loss_dict.items():
+            if torch.is_tensor(value):
+                self.writer.add_scalar(f'Train/{key}', value.item(), self.global_step)
+            else:
+                self.writer.add_scalar(f'Train/{key}', value, self.global_step)
+        
+        # Log masks (predicted and ground truth)
+        if mask_pred.dim() == 2:
+            mask_pred = mask_pred.unsqueeze(0)
+        if mask_gt.dim() == 2:
+            mask_gt = mask_gt.unsqueeze(0)
+        if mask_pred.dim() == 3:
+            mask_pred = mask_pred.unsqueeze(1)  # Add channel dimension
+        if mask_gt.dim() == 3:
+            mask_gt = mask_gt.unsqueeze(1)  # Add channel dimension
+        
+        # Log mask images
+        mask_pred_grid = make_grid(mask_pred, nrow=min(4, mask_pred.size(0)), normalize=True)
+        mask_gt_grid = make_grid(mask_gt, nrow=min(4, mask_gt.size(0)), normalize=True)
+        self.writer.add_image('Train/Mask_Predicted', mask_pred_grid, self.global_step)
+        self.writer.add_image('Train/Mask_GroundTruth', mask_gt_grid, self.global_step)
+        
+        self.global_step += 1
         return loss_dict, mask_gt
 
     def train(self):
@@ -110,43 +144,75 @@ class BaseTrainer(object):
         if self.args.continue_train:
             start = self.load_checkpoint()
         else:
-            start =0
-        ckpt_interval =self.cfg['ckpt_interval']
+            start = 0
+        ckpt_interval = self.cfg['ckpt_interval']
         vis_interval = self.cfg['vis_interval']
         save_name = self.cfg['save_name']
-        for epoch in range(start,self.cfg['num_epochs']):
+        
+        for epoch in range(start, self.cfg['num_epochs']):
             self.reduce_lr(epoch)
             sum_loss_dict = {k: 0.0 for k in self.cfg['lambdas']}
-            sum_loss_dict.update({'loss':0.0})
+            sum_loss_dict.update({'loss': 0.0})
+            
+            # Use train_step_shape for main training
             for batch in self.dataloader:
-
-                # loss_dict, mask_gt = self.train_extra_shape(batch)
-                loss_dict,mask_gt = self.train_extra_shape(batch)
-
-                # loss_values = {key: value.item() if torch.is_tensor(value) else value for key, value in loss_dict.items()}    
-
-            for k in loss_dict:
-                sum_loss_dict[k] += loss_dict[k]
-            if epoch % vis_interval == 0:
-                self.generate_examples(epoch, n=4)
-                save_tensor_image(mask_gt, os.path.join(self.cfg['save_result'], f'mask_gt_{epoch}.png'))
-            # if epoch % ckpt_interval == 0 and epoch > 0:
-            self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=f'extra_shape.pth')
-            # print result
+                loss_dict, mask_gt = self.train_step_shape(batch)
+                for k in loss_dict:
+                    if k in sum_loss_dict:
+                        if torch.is_tensor(loss_dict[k]):
+                            sum_loss_dict[k] += loss_dict[k].item()
+                        else:
+                            sum_loss_dict[k] += loss_dict[k]
+            
+            # Log epoch-level metrics
             n_train = len(self.dataloader)
             for k in sum_loss_dict:
                 sum_loss_dict[k] /= n_train
+                self.writer.add_scalar(f'Epoch/{k}', sum_loss_dict[k], epoch)
+            
+            # Log learning rates
+            self.writer.add_scalar('LearningRate/decoder', self.optim_decoder.param_groups[0]['lr'], epoch)
+            self.writer.add_scalar('LearningRate/latent', self.optim_latent.param_groups[0]['lr'], epoch)
+            self.writer.add_scalar('LearningRate/k', self.optim_k.param_groups[0]['lr'], epoch)
+            
+            if epoch % vis_interval == 0:
+                self.generate_examples(epoch, n=4)
+                save_tensor_image(mask_gt, os.path.join(self.cfg['save_result'], f'mask_gt_{epoch}.png'))
+                
+                # Log generated examples to TensorBoard
+                self.decoder.eval()
+                with torch.no_grad():
+                    random_index = torch.randint(0, len(self.dataset), (4,), device=self.device)
+                    random_latent = self.latent_shape(random_index)
+                    masks = latent_to_mask(random_latent, decoder=self.decoder, size=128, k=self.k)
+                    if masks.dim() == 2:
+                        masks = masks.unsqueeze(0)
+                    if masks.dim() == 3:
+                        masks = masks.unsqueeze(1)
+                    mask_grid = make_grid(masks, nrow=2, normalize=True)
+                    self.writer.add_image('Epoch/Generated_Masks', mask_grid, epoch)
+                self.decoder.train()
+            
+            if epoch % ckpt_interval == 0 and epoch > 0:
+                self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=f'epoch_{epoch}_{save_name}.pth')
+            
+            # Save latest checkpoint
+            self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=f'latest_{save_name}.pth')
+            
+            # Print result
             printstr = "Epoch: {} ".format(epoch)
             for k in sum_loss_dict:
                 printstr += "{}: {:.4f} ".format(k, sum_loss_dict[k])
             print(printstr)
-            
-        # self.save_checkpoint(checkpoint_path=self.cfg['checkpoint_path'], save_name=self.cfg['save_name'])      
+        
+        # Close TensorBoard writer
+        self.writer.close()      
             
     def train_step_shape(self, batch):
         self.optim_decoder.zero_grad()
         self.optim_latent.zero_grad()
-        batch_cuda = {k: v.to(device) for (k, v) in zip(batch.keys(), batch.values()) if torch.is_tensor(v)}
+        self.optim_k.zero_grad()
+        batch_cuda = {k: v.to(self.device) for (k, v) in zip(batch.keys(), batch.values()) if torch.is_tensor(v)}
         sdf_gt = batch_cuda['sdf']
         mask_gt = batch_cuda['hint']
         points = batch_cuda['points']
@@ -171,11 +237,38 @@ class BaseTrainer(object):
         self.optim_latent.step() 
         self.optim_k.step()     
         loss_dict.update({'loss': loss_total.item()})
+        
+        # Log to TensorBoard
+        for key, value in loss_dict.items():
+            if torch.is_tensor(value):
+                self.writer.add_scalar(f'Train/{key}', value.item(), self.global_step)
+            else:
+                self.writer.add_scalar(f'Train/{key}', value, self.global_step)
+        
+        # Log masks (predicted and ground truth)
+        if mask_pred.dim() == 2:
+            mask_pred = mask_pred.unsqueeze(0)
+        if mask_gt.dim() == 3:
+            mask_gt = mask_gt[:, 0, :, :]  # Take first channel if needed
+        if mask_gt.dim() == 2:
+            mask_gt = mask_gt.unsqueeze(0)
+        if mask_pred.dim() == 3:
+            mask_pred = mask_pred.unsqueeze(1)  # Add channel dimension
+        if mask_gt.dim() == 3:
+            mask_gt = mask_gt.unsqueeze(1)  # Add channel dimension
+        
+        # Log mask images
+        mask_pred_grid = make_grid(mask_pred, nrow=min(4, mask_pred.size(0)), normalize=True)
+        mask_gt_grid = make_grid(mask_gt, nrow=min(4, mask_gt.size(0)), normalize=True)
+        self.writer.add_image('Train/Mask_Predicted', mask_pred_grid, self.global_step)
+        self.writer.add_image('Train/Mask_GroundTruth', mask_gt_grid, self.global_step)
+        
+        self.global_step += 1
         return loss_dict, mask_gt
     
     def eval(self, decoder,latent_shape):
         for batch in self.dataloader:
-            batch_cuda = {k: v.to(device) for (k, v) in zip(batch.keys(), batch.values()) if torch.is_tensor(v)}
+            batch_cuda = {k: v.to(self.device) for (k, v) in zip(batch.keys(), batch.values()) if torch.is_tensor(v)}
             sdf_img_gt = batch_cuda['sdf_img']
             mask_gt = batch_cuda['hint']
             grid_sdf_gt = make_grid(sdf_img_gt.permute(0,3,1,2), nrow=4)
@@ -206,11 +299,9 @@ class BaseTrainer(object):
 if __name__ == '__main__':       
     parser = argparse.ArgumentParser(description='RUN Leaf NPM')
     parser.add_argument('--gpu', type=int, default=1, help='gpu index')
-    parser.add_argument('--wandb', type=str, default='base shape', help='run name of wandb')
     parser.add_argument('--mode', type=str, default='train', help='mode of train, shape or texture')
     parser.add_argument('--ckpt_shape', type=str, default='checkpoints/baseshape/sdf/latest.pth', help='checkpoint directory')
     parser.add_argument('--output', type=str, default='shape', help='output directory')
-    parser.add_argument('--use_wandb', action='store_true', help='use wandb')
     parser.add_argument('--continue_train', action='store_true', help='continue training from latest checkpoint')
     parser.add_argument('--config', type=str, default='scripts/configs/bashshape.yaml', help='config file')
     
@@ -218,10 +309,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     # os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     device = torch.device(f'cuda:{str(args.gpu)}' if torch.cuda.is_available() else 'cpu')
-    CFG = yaml.safe_load(open(args.config, 'r')) 
-    if args.use_wandb:
-        wandb.init(project='NeuraLeaf', name =args.wandb)
-        wandb.config.update(CFG)
+    CFG = yaml.safe_load(open(args.config, 'r'))
     
     # load decoder
     # decoder = SDFDecoder()
