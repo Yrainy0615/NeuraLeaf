@@ -14,6 +14,7 @@ import numpy as np
 import meshlib.mrmeshpy as mm
 import meshlib.mrmeshnumpy as mn
 from scripts.models.decoder import UDFNetwork, SWPredictor, TransPredictor
+from scripts.models.encoder import ShapeEncoder
 from scripts.utils.geom_utils import  points_to_voxel, raw_to_canonical, mask2mesh
 from scripts.utils.loss_utils import ARAPLoss
 from probreg import cpd
@@ -398,6 +399,8 @@ if __name__ == '__main__':
     parser.add_argument('--use_arap', action='store_true', help='use arap loss')
     parser.add_argument('--shape_checkpoint', type=str, default='checkpoints/baseshape.pth', help='path to shape checkpoint')
     parser.add_argument('--deform_checkpoint', type=str, default='checkpoints/deform.pth', help='path to deform checkpoint')
+    parser.add_argument('--shape_encoder_checkpoint', type=str, default='checkpoints/shape_encoder.pth', help='path to shape encoder checkpoint')
+    parser.add_argument('--deform_encoder_checkpoint', type=str, default='checkpoints/deform_encoder.pth', help='path to deform encoder checkpoint')
     
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
@@ -441,7 +444,14 @@ if __name__ == '__main__':
     # Initialize encoders (optional)
     shape_encoder = None  # Set to ShapeEncoder instance if available
     deform_encoder = None  # Set to DeformEncoder instance if available
-    
+    if os.path.exists(args.shape_encoder_checkpoint) and os.path.exists(args.deform_encoder_checkpoint):
+        shape_encoder = ShapeEncoder(code_dim=shape_latent_dim, res=128, output_dim=shape_latent_dim).to(device)
+        deform_encoder = ShapeEncoder(code_dim=deform_latent_dim, res=128, output_dim=deform_latent_dim).to(device)
+        shape_encoder.load_state_dict(torch.load(args.shape_encoder_checkpoint, map_location='cpu'))
+        deform_encoder.load_state_dict(torch.load(args.deform_encoder_checkpoint, map_location='cpu'))
+        shape_encoder.eval()
+        deform_encoder.eval()
+
     # Create reconstructor
     reconstructor = Reconstructor(
         CFG_deform, device, shape_decoder, swpredictor, transpredictor,

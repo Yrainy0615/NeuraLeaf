@@ -155,15 +155,8 @@ The `fitting.py` script fits a given mesh to the learned deformation model by op
 
 ```bash
 python fitting.py \
-    --gpu 0 \
     --mesh_path /path/to/input_mesh.ply \
-    --save_folder results/fitting \
-    --config scripts/configs/bashshape.yaml \
-    --config_deform scripts/configs/deform.yaml \
     --method neuraleaf \
-    --epoch 1000 \
-    --use_length_reg \
-    --use_arap
 ```
 
 ### Parameters
@@ -198,14 +191,8 @@ The `generation.py` script provides three generation functions for creating new 
 
 ```bash
 python generation.py \
-    --gpu 0 \
-    --config scripts/configs/bashshape.yaml \
-    --config_deform scripts/configs/deform.yaml \
-    --shape_checkpoint checkpoints/cvpr/baseshape_1214.pth \
-    --deform_checkpoint checkpoints/cvpr/latest_deform_shape_prior.pth \
-    --output_dir /mnt/data/encoder_dataset \
-    --num_deforms_per_shape 20 \
-    --seed 42
+    --num_deforms_per_shape 5 \
+    --mode random
 ```
 
 ### Generation Functions
@@ -268,14 +255,21 @@ When generating encoder training dataset, meshes are saved as:
 
 ## Pretrained Weights
 
-Download pretrained model checkpoints:
+Download pretrained model checkpoints from: [Google Drive](https://drive.google.com/drive/folders/YOUR_FOLDER_ID)
 
-- **Shape Model**: [baseshape.pth](https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing)
-- **Deformation Model**: [deform.pth](https://drive.google.com/file/d/YOUR_FILE_ID/view?usp=sharing)
+The download includes the following files:
+- `baseshape.pth` - Shape model checkpoint
+- `deform.pth` - Deformation model checkpoint
+- `shape_encoder.pth` - Shape encoder checkpoint
+- `deform_encoder.pth` - Deformation encoder checkpoint
 
 After downloading, place the checkpoints in the following directory structure:
 ```
 checkpoints/
+├── baseshape.pth
+├── deform.pth
+├── shape_encoder.pth
+└── deform_encoder.pth
 ```
 
 

@@ -246,6 +246,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', type=str, default='/mnt/data/encoder_dataset', help='output directory')
     parser.add_argument('--num_deforms_per_shape', type=int, default=5, help='number of random deform codes per shape')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
+    parser.add_argument('--mode', type=str, default='random', choices=['random', 'shape_interp', 'deformation_interp'], help='generation mode')
     
     args = parser.parse_args()
     
@@ -313,23 +314,23 @@ if __name__ == '__main__':
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
     
-    # Generate dataset
-    num_shapes = len(shape_codes)
-    num_deforms = len(deform_codes)
-    total_meshes = num_shapes * args.num_deforms_per_shape
-    
-    print(f"Generating {total_meshes} meshes ({num_shapes} shapes × {args.num_deforms_per_shape} deforms each)...")
-    
-    mesh_io = IO()
-    generated_count = 0
-    
-    for shape_idx in range(num_shapes):
-        # Randomly select deform indices for this shape
-        deform_indices = np.random.choice(num_deforms, args.num_deforms_per_shape, replace=False)
+    # random generation 
+    if args.mode == 'random':
+        num_shapes = len(shape_codes)
+        num_deforms = len(deform_codes)
+        total_meshes = num_shapes * args.num_deforms_per_shape
         
-        for deform_idx in deform_indices:
-            try:
-                # Generate mesh
+        print(f"Generating {total_meshes} meshes ({num_shapes} shapes × {args.num_deforms_per_shape} deforms each)...")
+        
+        mesh_io = IO()
+        generated_count = 0
+        
+        for shape_idx in range(num_shapes):
+            # Randomly select deform indices for this shape
+            deform_indices = np.random.choice(num_deforms, args.num_deforms_per_shape, replace=False)
+            
+            for deform_idx in deform_indices:
+
                 mesh = generator.random_generation(shape_idx=shape_idx, deform_idx=int(deform_idx))
                 
                 # Save mesh
@@ -340,11 +341,15 @@ if __name__ == '__main__':
                 generated_count += 1
                 if generated_count % 10 == 0:
                     print(f"Progress: {generated_count}/{total_meshes} meshes generated")
-                    
-            except Exception as e:
-                print(f"Error generating mesh for shape_idx={shape_idx}, deform_idx={deform_idx}: {e}")
-                continue
     
+    # shape interpolation
+    if args.mode == 'shape_interp':
+        pass
+
+    # deformation interpolation
+    if args.mode == 'deformation_interp':
+        pass
+
     print(f"Dataset generation completed!")
     print(f"Total meshes generated: {generated_count}/{total_meshes}")
     print(f"Output directory: {args.output_dir}")
