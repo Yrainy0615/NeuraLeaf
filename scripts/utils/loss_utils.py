@@ -2,10 +2,31 @@ import torch
 import torch.nn as nn
 import numpy as np
 from pytorch3d.loss import chamfer_distance
+from torch.autograd import grad
+
 
 def deformation_mapping_loss(d_cham, latent_code, phi=1.0):
-    latent_norm = torch.norm(latent_code, p=2)
+    """
+    Deformation mapping loss: encourages consistent mapping between 
+    deformation magnitude (chamfer distance) and latent code norm.
+
+    """
+    # Compute L2 norm for each sample in the batch
+    if latent_code.dim() > 1:
+        # [batch_size, latent_dim] -> [batch_size]
+        latent_norm = torch.norm(latent_code, p=2, dim=1)
+    else:
+        # [latent_dim] -> scalar
+        latent_norm = torch.norm(latent_code, p=2)
+    
+    # If batch, use mean of latent norms; otherwise use scalar
+    if latent_norm.dim() > 0:
+        latent_norm = latent_norm.mean()
+    
+    # Compute mapping loss: (d_cham / latent_norm - phi)^2
+    # This encourages: d_cham / latent_norm ≈ phi
     loss_map = ((d_cham / (latent_norm + 1e-8)) - phi) ** 2
+    
     return loss_map
 
 def gradient_penalty(critic, real, fake, alpha, train_step, device="cpu"):
@@ -125,3 +146,15 @@ def surface_area_loss(verts, faces, verts_deformed):
     loss = torch.mean((area_deformed - area_original) ** 2)
 
     return loss
+
+def gradient(outputs, inputs):
+    d_points = torch.ones_like(outputs, requires_grad=False, device=outputs.device)
+    points_grad = grad(
+        outputs=outputs,
+        inputs=inputs,
+        grad_outputs=d_points,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True,
+        allow_unused=True)[0][:, :, -3:]
+    return points_grad

@@ -185,20 +185,18 @@ class UDFNetwork(nn.Module):
         #                  dim=-1)
 
     def udf(self, xyz, latent):
-        return self.forward(xyz, latent)
+        # Concatenate xyz and latent to match forward signature
+        inputs = torch.cat([xyz, latent], dim=-1)
+        return self.forward(inputs)
 
     def udf_hidden_appearance(self, xyz, latent):
         return self.forward(xyz, latent)
 
     def gradient(self, xyz, latent):
-        xyz.requires_grad_(True)
-        latent.requires_grad_(True)
-        y = self.udf(xyz, latent)
-        x = torch.cat([xyz, latent],dim=-1)
-        d_output = torch.ones_like(y, requires_grad=False, device=y.device)
+        d_output = torch.ones_like(latent, requires_grad=False, device=xyz.device)
         gradients = torch.autograd.grad(
-            outputs=y,
-            inputs=x,
+            outputs=xyz,
+            inputs=latent,
             grad_outputs=d_output,
             create_graph=True,
             retain_graph=True,
@@ -245,26 +243,16 @@ class BoneDecoder(nn.Module):
         self.latent_dim = latent_dim
         self.fc1 = nn.Linear(latent_dim, 256)  
         self.fc2 = nn.Linear(256, 256)         
-        
         self.fc_bone = nn.Linear(256, num_bones * 3)  
         
-
     
     def forward(self, x):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc_bone(x)
         x = x.view(-1, self.num_bones, 3)
-        
-        # get bone centers, orientations, and scales
         centers = x[:, :, :3]
         centers = torch.clamp(centers, min=-1, max=1)
-
-        # orientations = x[:, :, 3:7]
-        # scales = x[:, :, 7:]    
-        # # normalize orientations
-        # orientations = F.normalize(orientations, p=2, dim=-1)
-        # bones = torch.cat([centers, orientations, scales], dim=-1)
         return centers.squeeze(0)
 
 class Embedding(nn.Module):

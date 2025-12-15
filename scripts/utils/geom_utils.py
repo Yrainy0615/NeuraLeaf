@@ -6,7 +6,10 @@ from pytorch3d import transforms
 from matplotlib import pyplot as plt
 import numpy as np
 from scipy.spatial import cKDTree as KDTree
-
+import meshlib.mrmeshpy as mm
+import meshlib.mrmeshnumpy as mn
+from pytorch3d.structures import Meshes
+from typing import List
 
 def rts_invert(rts_in):
     """
@@ -151,11 +154,59 @@ def create_grid_points_from_bounds(minimun, maximum, res, scale=None):
     return points_list
 
 
-def points_to_occ(grid,pts,res=128):
+def grid_to_occ(grid,pts,res=128):
+    # Convert grid to numpy if it's a torch tensor
+    if isinstance(grid, torch.Tensor):
+        grid = grid.cpu().numpy()
+    # Convert points to numpy if it's a torch tensor
+    if isinstance(pts, torch.Tensor):
+        pts = pts.cpu().numpy()
+    
     kdtree = KDTree(grid)
     occupancies = np.zeros(len(grid), dtype=np.int8)
-    pts = pts.cpu().numpy()
     _, idx = kdtree.query(pts)
     occupancies[idx] = 1
     occupancy_grid = occupancies.reshape(res,res,res)
     return occupancy_grid
+
+
+def raw_to_canonical(points):
+    points = points - points.mean(0)
+    scale = torch.max(torch.abs(points))
+    if scale > 0:
+        points = points / scale
+    return points
+
+
+def points_to_voxel(points, resolution=128):
+    points = raw_to_canonical(points)
+    grid = create_grid_points_from_bounds([0, 0, 0], [1, 1, 1], resolution)
+    grid = torch.tensor(grid, dtype=torch.float32)
+    voxel = grid_to_occ(grid, points, res=resolution)
+    return voxel
+
+
+def mask2mesh(masks:List[torch.Tensor]):
+    """Convert mask list to mesh list."""
+    meshes = []
+    for mask in masks:
+        mask = mask.squeeze(0).detach().cpu().numpy()
+        y_indices, x_indices = np.where(mask == 1)
+        z_coords = np.zeros_like(x_indices)
+        u_coords = x_indices / mask.shape[1]
+        v_coords = y_indices / mask.shape[0]
+        verts = np.stack([u_coords, v_coords, z_coords], axis=-1)
+        # Random sample 15000 points
+        if verts.shape[0] > 15000:
+            idx = np.random.choice(verts.shape[0], 15000, replace=False)
+            verts = verts[idx]
+        pc = mn.pointCloudFromPoints(verts)
+        pc.invalidateCaches()
+        mesh = mm.triangulatePointCloud(pc)
+        verts = mn.getNumpyVerts(mesh)
+        faces = mn.getNumpyFaces(mesh.topology)
+        mesh_torch3d = Meshes(verts=[torch.tensor(verts).float()], faces=[torch.tensor(faces).long()])
+        meshes.append(mesh_torch3d)
+    return meshes[0] if len(meshes) == 1 else meshes
+
+
