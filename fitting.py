@@ -25,7 +25,7 @@ def rigid_cpd_cuda(basepoints: torch.tensor, deformed_points: torch.tensor, use_
     import cupy as cp
     if use_cuda:
         to_cpu = cp.asnumpy
-        cp.cuda.Device(3).use()
+        cp.cuda.Device().use()
         cp.cuda.set_allocator(cp.cuda.MemoryPool().malloc)
     else:
         cp = np
@@ -227,8 +227,8 @@ class Reconstructor:
         shape_code = torch.nn.Parameter(shape_code_init.clone())
         deform_code = torch.nn.Parameter(deform_code_init.clone())
         
-        optimizer_shape = torch.optim.Adam([shape_code], lr=0.01) # 0.001
-        optimizer_deform = torch.optim.Adam([deform_code], lr=0.005) # 0.001
+        optimizer_shape = torch.optim.Adam([shape_code], lr=0.01) 
+        optimizer_deform = torch.optim.Adam([deform_code], lr=0.005) 
         
         deform_points = points.to(self.device)
         if deform_points.ndimension() == 2:
@@ -291,17 +291,14 @@ class Reconstructor:
             
             loss_total = loss_chamfer + loss_arap + loss_laplacian + loss_edge + loss_length
             loss_total.backward()
-            
             optimizer_shape.step()
             optimizer_deform.step()
-            
             if i % 50 == 0:
                 print(f'Epoch {i} loss: {loss_total.item():.6f}, chamfer: {loss_chamfer.item():.6f}, smooth: {loss_laplacian.item():.6f}, edge: {loss_edge.item():.6f}, length: {loss_length.item():.6f},arap: {loss_arap.item():.6f}')
-            
-            if i % 300 == 0:
+            if i % (epoch//3) == 0 and epoch !=0:
                 self.reduce_lr(optimizer_shape)
                 self.reduce_lr(optimizer_deform)
-        
+    
         if save_mesh and save_path is not None:
             IO().save_mesh(new_mesh, save_path)
             # Save final base mesh from updated shape_code
@@ -313,7 +310,6 @@ class Reconstructor:
             deform_faces = torch.zeros((0, 3), dtype=torch.long, device=deform_verts.device)  # [0, 3]
             deform_points_mesh = Meshes(verts=[deform_verts], faces=[deform_faces])
             IO().save_mesh(deform_points_mesh, save_path.replace('_fitted.obj', '_ori.obj'))
-        
         return loss_chamfer, new_mesh
 
     def fitting_direct(self, base_mesh, deform_points, epoch=601, save_mesh=False, save_path=None):

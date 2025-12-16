@@ -32,14 +32,12 @@ RUN mamba create -n ${ENV_NAME} python=3.9 -y && conda clean -afy
 
 # Install PyTorch (CUDA 11.8 compatible)
 RUN conda run -n ${ENV_NAME} pip install \
-    torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 \
-    --index-url https://download.pytorch.org/whl/cu118
-
-# Install PyTorch3D
+    torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 \
+    --extra-index-url https://download.pytorch.org/whl/cu117
+# install pytorch3d 
 RUN conda install -y -n ${ENV_NAME} \
     -c pytorch3d -c pytorch -c fvcore -c iopath -c bottler -c conda-forge \
     fvcore iopath nvidiacub pytorch3d
-
 # Install other conda packages
 RUN mamba install -n ${ENV_NAME} -c conda-forge \
     scipy \
