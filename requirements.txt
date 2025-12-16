@@ -2,9 +2,6 @@ gradio
 imageio
 numpy==1.24.4
 imageio-ffmpeg
-einops
-transformers
-open_clip_torch
 timm
 taichi
 trimesh
