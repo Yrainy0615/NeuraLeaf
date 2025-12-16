@@ -227,7 +227,7 @@ class Reconstructor:
         shape_code = torch.nn.Parameter(shape_code_init.clone())
         deform_code = torch.nn.Parameter(deform_code_init.clone())
         
-        optimizer_shape = torch.optim.Adam([shape_code], lr=0.005) # 0.001
+        optimizer_shape = torch.optim.Adam([shape_code], lr=0.01) # 0.001
         optimizer_deform = torch.optim.Adam([deform_code], lr=0.005) # 0.001
         
         deform_points = points.to(self.device)
@@ -400,7 +400,7 @@ class Reconstructor:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Neural Leaf Fitting')
-    parser.add_argument('--gpu', type=int, default=2, help='gpu index')
+    parser.add_argument('--gpu', type=int, default=0, help='gpu index')
     parser.add_argument('--save_folder', type=str, default='results/fitting', help='output directory')
     parser.add_argument('--config', type=str, default='scripts/configs/bashshape.yaml', help='config file')
     parser.add_argument('--config_deform', type=str, default='scripts/configs/deform.yaml', help='deform config file')
