@@ -401,7 +401,7 @@ class Reconstructor:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Neural Leaf Fitting')
     parser.add_argument('--gpu', type=int, default=2, help='gpu index')
-    parser.add_argument('--save_folder', type=str, default='results/fitting_new', help='output directory')
+    parser.add_argument('--save_folder', type=str, default='results/fitting', help='output directory')
     parser.add_argument('--config', type=str, default='scripts/configs/bashshape.yaml', help='config file')
     parser.add_argument('--config_deform', type=str, default='scripts/configs/deform.yaml', help='deform config file')
     parser.add_argument('--mesh_path', type=str, required=False, default='/mnt/data/cvpr_final/deform_train/17_deform.ply', help='path to input mesh')

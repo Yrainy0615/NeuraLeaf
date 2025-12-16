@@ -85,7 +85,7 @@ conda install -y -c pytorch3d -c pytorch -c fvcore -c iopath -c bottler -c conda
 conda install -y -c conda-forge scipy scikit-learn
 
 # Install pip requirements
-pip install -r docker/requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Training Scripts
@@ -121,18 +121,18 @@ This script trains the deformation network that learns to deform base shapes int
 **Usage:**
 ```bash
 python scripts/train/train_deform_w_shape.py \
+    --config scripts/configs/deform.yaml
 ```
 
 **Key Features:**
 - Jointly optimizes deform codes, bone positions, skinning weights, and transformations
-- Uses chamfer distance, edge loss, and laplacian smoothing
-- Supports ARAP loss and length regularization (via config)
+- Supports other shape regularizers like ARAP and length regularization
 
 ### 3. `scripts/train/train_encoder.py`
 
-**Purpose:** Train encoders to predict shape and deform codes from point clouds.
+**Purpose:** Train encoders to predict initial shape and deform codes from input point clouds.
 
-This script trains encoders that take point clouds (converted to SDF grids) as input and predict the corresponding shape and deformation codes. The training uses ground truth codes from pretrained decoders.
+This script trains encoders that take point clouds (converted to SDF grids) as input and predict the corresponding shape and deformation codes. The training uses ground truth codes from pretrained models.
 
 **Usage:**
 ```bash
@@ -145,7 +145,6 @@ python scripts/train/train_encoder.py \
 **Key Features:**
 - Converts point clouds to SDF grids (voxel representation)
 - Trains separate encoders for shape and deformation codes
-- Uses MSE loss between predicted and GT codes
 
 ## Fitting
 
@@ -155,23 +154,20 @@ The `fitting.py` script fits a given mesh to the learned deformation model by op
 
 ```bash
 python fitting.py \
-    --mesh_path /path/to/input_mesh.ply \
+    --mesh_path /path/to/input \
     --method neuraleaf \
+    --save_folder /path/to/save_folder
 ```
 
 ### Parameters
 
 **Required:**
-- `--mesh_path`: Path to input mesh file (.obj or .ply)
+- `--mesh_path`: Path to input mesh/point_cloud file (.obj or .ply)
 - `--save_folder`: Output directory for fitted meshes
 
 **Optional:**
-- `--gpu`: GPU index (default: 2)
-- `--config`: Shape model config file (default: `scripts/configs/bashshape.yaml`)
-- `--config_deform`: Deformation model config file (default: `scripts/configs/deform.yaml`)
-- `--epoch`: Number of optimization epochs (default: 1000)
 - `--method`: Fitting method
-  - `neuraleaf`: Optimize shape and deform codes (recommended). This method works well when the input mesh is within the learned parameter space.
+  - `neuraleaf`: Optimize shape and deform codes. This method works well when the input mesh is within the learned parameter space.
   - `direct`: Directly optimize skinning weights, bones, and transformations. Since NeuraLeaf is a parametric model, it may struggle with inputs that fall outside the training distribution. When the input mesh exceeds the parameter range or is significantly different from the training data, you can try the `direct` method as a fallback, which bypasses the learned latent codes and directly optimizes the deformation parameters. 
 - `--use_length_reg`: Enable length regularization to preserve boundary edge lengths
 - `--use_arap`: Enable ARAP (As-Rigid-As-Possible) loss for shape regularization
@@ -241,12 +237,10 @@ meshes = generator.deformation_interpolation(
 - `--deform_checkpoint`: Path to pretrained deformation model checkpoint
 
 **Optional:**
-- `--gpu`: GPU index (default: 0)
 - `--config`: Shape config file (default: `scripts/configs/bashshape.yaml`)
 - `--config_deform`: Deform config file (default: `scripts/configs/deform.yaml`)
-- `--output_dir`: Output directory for generated meshes (default: `/mnt/data/encoder_dataset`)
-- `--num_deforms_per_shape`: Number of random deform codes per shape for dataset generation (default: 5)
-- `--seed`: Random seed for reproducibility (default: 42)
+- `--output_dir`: Output directory for generated meshes 
+- `--num_deforms_per_shape`: Number of random deform codes per shape generation (default: 5)
 
 ### Output Format
 
@@ -270,6 +264,19 @@ checkpoints/
 ├── deform.pth
 ├── shape_encoder.pth
 └── deform_encoder.pth
+```
+
+## Citation
+
+If you find our code, dataset or paper useful, please consider citing
+
+```bibtex
+@InProceedings{Yang_2025_ICCV,
+    author    = {Yang, Yang and Mao, Dongni and Santo, Hiroaki and Matsushita, Yasuyuki and Okura, Fumio},
+    title     = {NeuraLeaf: Neural Parametric Leaf Models with Shape and Deformation Disentanglement},
+    booktitle = {Proceedings of the IEEE/CVF International Conference on Computer Vision (ICCV)},
+    year      = {2025},
+}
 ```
 
 
