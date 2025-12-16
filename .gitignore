@@ -166,4 +166,7 @@ cython_debug/
 /vein_segmentation
 /debug
 PROJECT_OVERVIEW.md
-/docker
+docker/
+logs/
+docs/
+submodule/

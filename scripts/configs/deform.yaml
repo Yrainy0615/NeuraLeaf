@@ -1,6 +1,6 @@
 NBS:
   num_bones: 1000
-  lat_dim: 128
+  lat_dim: 256
 
 Deform:
   Z_DIM: 256
@@ -31,28 +31,25 @@ Trainer:
   lr_decay_interval_lat: 200
   lr_decay_factor_lat: 0.5
   START_TRAIN_AT_IMG_SIZE: 8
-  shape_checkpoint: checkpoints/cvpr/base_deformleaf
-  save_result: results/cvpr/fitting/train_deformleaf_map
-  test_result: results/deform/test
-  checkpoint_path: checkpoints/cvpr/
-  save_name: neuraleaf_deform_small
-  output_dir: results/deform/render.gif
-  output_dir_depth: results/deform/depth.gif
+  shape_checkpoint: checkpoints/baseshape.pth
+  save_result: results/IJCV/deform/
+  checkpoint_path: checkpoints/IJCV/deform/
+  save_name: deform
   grad_clip: 0.025
   grad_clip_lat: 0.025
 
   lambdas:
     sdf: 1
     sil: 1
-    reg_shape: 0.01
+    reg_shape: 0.001
     shape: 1
-    edge: 5 # 1
+    edge: 1 # 1
     # area: 0.05
-    smooth: 10 # 5
+    smooth: 1
     normal: 1
     length: 1
     arap: 1
-    reg_deform: 0.01
+    reg_deform: 0.001
     bone: 10
     map: 0.01
 

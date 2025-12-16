@@ -16,27 +16,28 @@ Decoder:
 
 Training:
   batch_size: 1
-  num_epochs: 3000
-  vis_interval: 50
-  data_dir: dataset/2D_Datasets
+  num_epochs: 10000
+  vis_interval: 1000
+  data_dir: /mnt/data/2D_Datasets
   n_sample: 100000
   LR_D: 0.001
   LR_LAT: 0.001
-  ckpt_interval: 500
-  lr_decay_interval_lat: 500
+  ckpt_interval: 100
+  lr_decay_interval_lat: 1000
   lr_decay_factor_lat: 0.8
   START_TRAIN_AT_IMG_SIZE: 8
-  save_result: results/cvpr/base
-  test_result: results/baseshape
-  checkpoint_path: checkpoints/cvpr
-  save_name: base_deformleaf
-  log_dir: results/tensorboard/base_shape
+  save_result: results/IJCV/baseshape/
+  test_result: results/IJCV/baseshape/
+  checkpoint_path: checkpoints/IJCV/baseshape/
+  save_name: base
+  log_dir: results/IJCV/baseshape/
 
 
   lambdas:
     loss_mse: 1.0
     lat_reg: 0.001
     loss_mask: 1
+    loss_eikonal: 0.01
 
 Deform:
   decoder_lat_dim: 712

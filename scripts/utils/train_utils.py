@@ -2,7 +2,6 @@ import os
 import torch
 import torch.optim as optim
 import math
-import wandb
 
 class BaseTrainer(object):
     def __init__(self, decoder,dataset, cfg, device, args):

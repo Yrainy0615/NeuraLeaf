@@ -15,8 +15,6 @@ from pytorch3d.io import load_obj, load_ply, load_objs_as_meshes
 from pytorch3d.loss import chamfer_distance, mesh_edge_loss, mesh_laplacian_smoothing
 from pytorch3d.transforms import quaternion_to_matrix
 from pytorch3d.structures import Meshes
-import skimage.morphology as morphology
-import networkx as nx
 from matplotlib import pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Use a non-interactive backend
@@ -170,35 +168,6 @@ class NBS():
             plt.savefig("bone.png")  # 保存图像
         plt.close()
 
-    def generate_bone_from_vein(self):
-        vein = cv2.imread(self.vein_file)
-        # graph 
-        # G=nx.Graph()
-        # for joint in joints:
-        #     G.add_nodes_from(joint)
-        
-        # for joint in joints:
-        #     neighbors = self.get_neighbors(joint, joints)
-        #     for neighbor in neighbors:
-        #         G.add_edges_from(joint, neighbor)
-        
-        # sample points from vein mask
-        vein_points = np.argwhere(vein[:,:,0]>0)
-        # expand 2d -> 3d。 z=0
-        vein_points = np.concatenate([vein_points, np.zeros((vein_points.shape[0],1))], axis=1)
-        # vein_points = vein_points[np.random.choice(vein_points.shape[0], self.num_bones)]
-        vein_points = self.farthest_point_sampling(torch.tensor(vein_points).float(), self.num_bones)
-        # change vein points to bone points (uv coordinate)
-        bone_points_x = vein_points[:,:,1] / vein.shape[1]
-        bone_points_y = vein_points[:,:,0] / vein.shape[0]
-        bone_points_z = vein_points[:,:,2]
-        bone_points = np.stack([bone_points_x, bone_points_y,bone_points_z], axis=2)
-        bone_points = torch.tensor(bone_points).float()
-        # mv bone points to uv center
-        bone_points = bone_points - torch.mean(bone_points, dim=1)
-        # visualize bone on base shape
-        bone = self.generate_bone(bone_points)
-        return bone
 
     @staticmethod
     def get_neighbors(point, points):

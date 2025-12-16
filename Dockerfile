@@ -1,23 +1,16 @@
 FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
-ARG USER_ID=1130
-ARG GROUP_ID=300
-ARG USER_NAME="yyang"
-
-RUN ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime && \
-    groupadd -g "${GROUP_ID}" "${USER_NAME}" && \
-    useradd -u "${USER_ID}" -m "${USER_NAME}" -g "${USER_NAME}" && \
-    echo "${USER_NAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-
 ENV DEBIAN_FRONTEND=noninteractive
 
-# basic tools
+# Install basic tools and OpenCV dependencies
 RUN apt-get update && apt-get install -y \
     build-essential wget git vim cmake \
+    libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
+    libopengl0 libglu1-mesa mesa-utils \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ############################
-# install Miniconda + mamba  #
+# Miniconda
 ############################
 
 ENV CONDA_DIR=/opt/conda
@@ -26,45 +19,40 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86
     rm /tmp/miniconda.sh
 ENV PATH=${CONDA_DIR}/bin:${PATH}
 
-# Accept conda Terms of Service
+# Accept conda ToS
 RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && \
     conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 
-# install mamba, accelerate environment creation
 RUN conda install -n base -c conda-forge mamba -y && conda clean -afy
-
-###########################
-# create neuraleaf env    #
-###########################
 
 ARG ENV_NAME=neuraleaf
 
-# basic env
-RUN mamba create -n ${ENV_NAME} python=3.10 -y && conda clean -afy
+# Create Python environment
+RUN mamba create -n ${ENV_NAME} python=3.9 -y && conda clean -afy
 
-# Install PyTorch + CUDA 11.8
+# Install PyTorch (CUDA 11.8 compatible)
 RUN conda run -n ${ENV_NAME} pip install \
-    torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 \
-    --index-url https://download.pytorch.org/whl/cu118
-
-# Install numpy and other scientific packages via conda to avoid compilation issues
+    torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 \
+    --extra-index-url https://download.pytorch.org/whl/cu117
+# install pytorch3d 
+RUN conda install -y -n ${ENV_NAME} \
+    -c pytorch3d -c pytorch -c fvcore -c iopath -c bottler -c conda-forge \
+    fvcore iopath nvidiacub pytorch3d
+# Install other conda packages
 RUN mamba install -n ${ENV_NAME} -c conda-forge \
-    numpy \
     scipy \
     scikit-learn \
     -y && conda clean -afy
 
-# Install other packages from requirements.txt
+# Install pip requirements
 COPY requirements.txt /tmp/requirements.txt
 RUN conda run -n ${ENV_NAME} pip install -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
 
-# use bash
 SHELL ["bash", "-lc"]
 
-# write activate command for root and user
-RUN echo "conda activate ${ENV_NAME}" >> /root/.bashrc
-RUN echo "conda activate ${ENV_NAME}" >> /home/${USER_NAME}/.bashrc
+# Setup conda activation in bashrc
+RUN echo "source ${CONDA_DIR}/etc/profile.d/conda.sh && conda activate ${ENV_NAME}" >> /root/.bashrc
 
-USER ${USER_NAME}
-WORKDIR /home/${USER_NAME}/mnt/workspace
+WORKDIR /workspace
+
