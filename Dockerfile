@@ -45,7 +45,7 @@ RUN mamba install -n ${ENV_NAME} -c conda-forge \
     -y && conda clean -afy
 
 # Install pip requirements
-COPY docker/requirements.txt /tmp/requirements.txt
+COPY requirements.txt /tmp/requirements.txt
 RUN conda run -n ${ENV_NAME} pip install -r /tmp/requirements.txt && \
     rm /tmp/requirements.txt
 
