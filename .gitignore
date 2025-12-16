@@ -169,4 +169,4 @@ PROJECT_OVERVIEW.md
 docker/
 logs/
 docs/
-submodule/
+# submodule/ - commented out to allow git submodules
