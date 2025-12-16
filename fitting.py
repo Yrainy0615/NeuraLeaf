@@ -227,8 +227,8 @@ class Reconstructor:
         shape_code = torch.nn.Parameter(shape_code_init.clone())
         deform_code = torch.nn.Parameter(deform_code_init.clone())
         
-        optimizer_shape = torch.optim.Adam([shape_code], lr=0.01) # 0.001
-        optimizer_deform = torch.optim.Adam([deform_code], lr=0.01) # 0.001
+        optimizer_shape = torch.optim.Adam([shape_code], lr=0.005) # 0.001
+        optimizer_deform = torch.optim.Adam([deform_code], lr=0.005) # 0.001
         
         deform_points = points.to(self.device)
         if deform_points.ndimension() == 2:

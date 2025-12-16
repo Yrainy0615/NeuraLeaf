@@ -1,6 +1,6 @@
 # NeuraLeaf
 
-Implementation of NeuraLeaf - a neural representation for 3D leaf deformation.
+Implementation of NeuraLeaf - a neural representation for 3D leaf reconstruction and generation.
 
 ## Dataset
 
