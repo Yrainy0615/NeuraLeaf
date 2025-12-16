@@ -41,16 +41,15 @@ Trainer:
   lambdas:
     sdf: 1
     sil: 1
-    reg_shape: 0.01
+    reg_shape: 0.001
     shape: 1
     edge: 1 # 1
     # area: 0.05
-    smooth: 5
-    laplacian: 0.01
+    smooth: 1
     normal: 1
-    length: 0.1
+    length: 1
     arap: 1
-    reg_deform: 0.01
+    reg_deform: 0.001
     bone: 10
     map: 0.01
 

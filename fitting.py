@@ -97,12 +97,18 @@ class Reconstructor:
             
         return shape_code, deform_code
 
-    def rigid_to_canonical(self, points, base_points):
+    def rigid_to_canonical(self, points, base_points, save_folder=None,save_name=None):
         """Rigid registration of points to canonical base shape."""
-        points_np = points.detach().cpu().numpy()
-        base_points_np = base_points.detach().cpu().numpy()
-        registered_points = rigid_cpd_cuda(base_points_np, points_np, use_cuda=True)
-        return torch.tensor(registered_points, dtype=torch.float32).to(self.device)
+        # check if points saved then load 
+        rigid_save_path = os.path.join(save_folder, f'{save_name}_ori.obj')
+        if os.path.exists(rigid_save_path):
+            registered_points = load_objs_as_meshes([rigid_save_path])
+            return registered_points.verts_list()[0]
+        else:
+            points_np = points.detach().cpu().numpy()
+            base_points_np = base_points.detach().cpu().numpy()
+            registered_points = rigid_cpd_cuda(base_points_np, points_np, use_cuda=True)
+            return torch.tensor(registered_points, dtype=torch.float32).to(self.device)
 
 
     def single_leaf_predict(self, mesh_path):
@@ -136,7 +142,7 @@ class Reconstructor:
         
         # 6. Rigid registration to canonical base shape
         base_points = base_mesh.verts_packed()
-        points_registered = self.rigid_to_canonical(verts_normalized, base_points)
+        points_registered = self.rigid_to_canonical(verts_normalized, base_points, save_folder=args.save_folder, save_name=mesh_path.split('/')[-1].split('.')[0])
         
         return {
             'base_mesh': base_mesh,
@@ -221,8 +227,8 @@ class Reconstructor:
         shape_code = torch.nn.Parameter(shape_code_init.clone())
         deform_code = torch.nn.Parameter(deform_code_init.clone())
         
-        optimizer_shape = torch.optim.Adam([shape_code], lr=0.001)
-        optimizer_deform = torch.optim.Adam([deform_code], lr=0.001)
+        optimizer_shape = torch.optim.Adam([shape_code], lr=0.01) # 0.001
+        optimizer_deform = torch.optim.Adam([deform_code], lr=0.01) # 0.001
         
         deform_points = points.to(self.device)
         if deform_points.ndimension() == 2:
@@ -234,18 +240,27 @@ class Reconstructor:
         # Normalize base_points to zero mean
         base_points = raw_to_canonical(base_points.squeeze(0)).unsqueeze(0)
         base_faces = base_mesh.faces_packed().unsqueeze(0).to(self.device)
-        
-        # Initialize ARAP loss and compute initial edge lengths for boundary edges
         arap_loss = ARAPLoss(base_points, base_faces)
-        initial_edge_lengths = None
         if self.use_length_reg:
             boundary_edges = self.find_boundary_edges(base_faces.squeeze(0))
             initial_edge_lengths = self.compute_edge_length(base_points.squeeze(0), boundary_edges)
-
+        else:
+            initial_edge_lengths = None
         
-        for i in range(epoch):
+        for i in range(epoch):          
             optimizer_shape.zero_grad()
             optimizer_deform.zero_grad()
+            
+            # Update base shape from shape_code
+            with torch.no_grad():
+                base_mask = latent_to_mask(shape_code.unsqueeze(0), self.shape_decoder, size=256, k=self.k)
+                base_mesh_new = mask2mesh([base_mask])
+                base_mesh_new = base_mesh_new.to(self.device)
+                base_points = base_mesh_new.verts_packed().unsqueeze(0)
+                # Normalize base_points to zero mean
+                base_points = raw_to_canonical(base_points.squeeze(0)).unsqueeze(0)
+                base_faces = base_mesh_new.faces_packed().unsqueeze(0)
+            
             
             # Forward pass
             rts_fw = self.trans_predictor(deform_code.unsqueeze(0), self.bone)
@@ -254,43 +269,34 @@ class Reconstructor:
             
             new_mesh = Meshes(verts=v0, faces=base_faces, textures=base_mesh.textures)
             loss_chamfer = chamfer_distance(deform_points, v0)[0]
-            reg_shape = torch.norm(shape_code, dim=-1).mean()
-            reg_deform = torch.norm(deform_code, dim=-1).mean()
             
             # Shape regularizers: ARAP, Laplacian, and edge length
             # ARAP loss: As-Rigid-As-Possible regularization
             if self.use_arap:
-                loss_arap = arap_loss(v0, base_points)[0]
+                loss_arap = arap_loss(v0, base_points)[0] 
             else:
                 loss_arap = torch.tensor(0.0, device=self.device)
+            if self.use_length_reg:
+                new_edge_lengths = self.compute_edge_length(v0.squeeze(0), boundary_edges)
+                loss_length = (new_edge_lengths - initial_edge_lengths).abs().mean()
+            else:
+                loss_length = torch.tensor(0.0, device=self.device)
             
             # Laplacian loss: mesh smoothness
             loss_laplacian = mesh_laplacian_smoothing(new_mesh)
+            loss_edge = mesh_edge_loss(new_mesh)
             
             # Edge length loss: preserve boundary edge lengths
             loss_length = torch.tensor(0.0, device=self.device)
-            if initial_edge_lengths is not None and self.use_length_reg:
-                new_edge_lengths = self.compute_edge_length(v0.squeeze(0), boundary_edges)
-                loss_length = (new_edge_lengths - initial_edge_lengths).abs().mean()
             
-            loss_dict = {
-                'shape': loss_chamfer, 
-                'reg_shape': reg_shape, 
-                'reg_deform': reg_deform,
-                'arap': loss_arap,
-                'laplacian': loss_laplacian,
-                'length': loss_length
-            }
-            loss_total = 0
-            for key in loss_dict.keys():
-                loss_total += loss_dict[key] * self.cfg_deform['lambdas'][key]
-            
+            loss_total = loss_chamfer + loss_arap + loss_laplacian + loss_edge + loss_length
             loss_total.backward()
+            
             optimizer_shape.step()
             optimizer_deform.step()
             
             if i % 50 == 0:
-                print(f'Epoch {i} loss: {loss_total.item():.6f}, chamfer: {loss_chamfer.item():.6f}, arap: {loss_arap.item():.6f}, laplacian: {loss_laplacian.item():.6f}, length: {loss_length.item():.6f}')
+                print(f'Epoch {i} loss: {loss_total.item():.6f}, chamfer: {loss_chamfer.item():.6f}, smooth: {loss_laplacian.item():.6f}, edge: {loss_edge.item():.6f}, length: {loss_length.item():.6f},arap: {loss_arap.item():.6f}')
             
             if i % 300 == 0:
                 self.reduce_lr(optimizer_shape)
@@ -298,7 +304,11 @@ class Reconstructor:
         
         if save_mesh and save_path is not None:
             IO().save_mesh(new_mesh, save_path)
-            IO().save_mesh(base_mesh, save_path.replace('.obj', '_base.obj'))
+            # Save final base mesh from updated shape_code
+            with torch.no_grad():
+                final_base_mask = latent_to_mask(shape_code.unsqueeze(0), self.shape_decoder, size=256, k=self.k)
+                final_base_mesh = mask2mesh([final_base_mask])
+                IO().save_mesh(final_base_mesh, save_path.replace('.obj', '_base.obj'))
             deform_verts = deform_points.squeeze(0)  # [N, 3]
             deform_faces = torch.zeros((0, 3), dtype=torch.long, device=deform_verts.device)  # [0, 3]
             deform_points_mesh = Meshes(verts=[deform_verts], faces=[deform_faces])
@@ -315,7 +325,7 @@ class Reconstructor:
         # Normalize base_points to zero mean
         base_points = raw_to_canonical(base_points.squeeze(0)).unsqueeze(0)
         base_points = base_points * 2  # Rescale base points
-        
+        shape_code, _ = self.get_initial_codes(base_points)
         deform_points = deform_points.to(self.device)
         if deform_points.ndimension() == 2:
             deform_points = deform_points.unsqueeze(0)
@@ -331,7 +341,7 @@ class Reconstructor:
             bone = torch.nn.Parameter(bone_tensor.to(self.device))
         else:
             bone = torch.nn.Parameter(self.bone.clone())
-        
+        arap_loss = ARAPLoss(base_points, base_faces)
         K = bone.size(0)
         sw = torch.nn.Parameter(torch.rand(N, K).uniform_(0.1, 1.0).to(self.device))
         t = torch.zeros(K, 7).to(self.device)
@@ -341,6 +351,8 @@ class Reconstructor:
         optimizer_sw = torch.optim.Adam([sw], lr=0.1)
         optimizer_bone = torch.optim.Adam([bone], lr=0.5)
         optimizer_T = torch.optim.Adam([T], lr=0.1)
+
+        # Calculate the epoch threshold for shape-related parameter updates
         
         for i in range(epoch):
             optimizer_bone.zero_grad()
@@ -369,12 +381,13 @@ class Reconstructor:
             optimizer_sw.step()
             optimizer_bone.step()
             optimizer_T.step()
+
             
             if i % 50 == 0:
                 print(f'Epoch {i} loss: {loss_total.item():.6f}, chamfer: {loss_chamfer.item():.6f}, '
                       f'edge: {loss_edge.item():.6f}, smooth: {loss_laplacian.item():.6f}')
             
-            if i % 500 == 0:
+            if i % 300 == 0:
                 self.reduce_lr(optimizer_sw)
                 self.reduce_lr(optimizer_bone)
                 self.reduce_lr(optimizer_T)
@@ -391,7 +404,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_folder', type=str, default='results/fitting_new', help='output directory')
     parser.add_argument('--config', type=str, default='scripts/configs/bashshape.yaml', help='config file')
     parser.add_argument('--config_deform', type=str, default='scripts/configs/deform.yaml', help='deform config file')
-    parser.add_argument('--mesh_path', type=str, default='/mnt/data/cvpr_final/deform_train/17_deform.ply', help='path to input mesh')
+    parser.add_argument('--mesh_path', type=str, required=False, default='/mnt/data/cvpr_final/deform_train/17_deform.ply', help='path to input mesh')
     parser.add_argument('--method', type=str, default='neuraleaf', choices=['neuraleaf', 'direct'], 
                         help='fitting method')
     parser.add_argument('--epoch', type=int, default=1000, help='number of epochs')
