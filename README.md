@@ -255,7 +255,7 @@ When generating encoder training dataset, meshes are saved as:
 
 ## Pretrained Weights
 
-Download pretrained model checkpoints from: [Google Drive][https://drive.google.com/drive/folders/1v9K7HJJVlCXkPfgXuEumLp9AP8iIS14G?usp=drive_link]
+Download pretrained model checkpoints from: [Google Drive](https://drive.google.com/drive/folders/1v9K7HJJVlCXkPfgXuEumLp9AP8iIS14G?usp=drive_link)
 
 The download includes the following files:
 - `baseshape.pth` - Shape model checkpoint
