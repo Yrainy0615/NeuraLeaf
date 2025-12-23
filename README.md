@@ -144,7 +144,7 @@ This script trains encoders that take point clouds (converted to SDF grids) as i
 ```bash
 python scripts/train/train_encoder.py \
     --config scripts/configs/deform.yaml \
-    --shape_checkpoint checkpoints/baseshape.pth \
+    --shape_checkpoint checkpoints/baseshape_l.pth \
     --deform_checkpoint checkpoints/deform.pth \
 ```
 
@@ -260,16 +260,16 @@ Download pretrained model checkpoints from: [Google Drive](https://drive.google.
 The download includes the following files:
 - `baseshape.pth` - Shape model checkpoint
 - `deform.pth` - Deformation model checkpoint
-- `shape_encoder.pth` - Shape encoder checkpoint
-- `deform_encoder.pth` - Deformation encoder checkpoint
+- `encoder.pth` - Shape encoder checkpoint
+- `baseshape_l.pth` - Larger baseshape space checkpoint (default)
 
 After downloading, place the checkpoints in the following directory structure:
 ```
 checkpoints/
 ├── baseshape.pth
 ├── deform.pth
-├── shape_encoder.pth
-└── deform_encoder.pth
+├── encoder.pth
+└── baseshape_l.pth
 ```
 
 ## Citation
