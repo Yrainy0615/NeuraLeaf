@@ -35,7 +35,10 @@ def rigid_cpd_cuda(basepoints: torch.tensor, deformed_points: torch.tensor, use_
     if source_pt.shape[0] > 10000:
         random_index = np.random.choice(source_pt.shape[0], 10000, replace=False)
         source_pt = source_pt[random_index]
-    rcpd = cpd.RigidCPD(target_pt, use_cuda=use_cuda)
+    if target_pt.shape[0] > 10000:
+        random_index = np.random.choice(target_pt.shape[0], 10000, replace=False)
+        target_pt_sample = target_pt[random_index]
+    rcpd = cpd.RigidCPD(target_pt_sample, use_cuda=use_cuda)
     tf_param_rgd, _, _ = rcpd.registration(source_pt)
     target_rgd = tf_param_rgd.transform(target_pt)
     return target_rgd
@@ -58,6 +61,10 @@ class Reconstructor:
         self.deform_encoder = deform_encoder
         self.use_length_reg = use_length_reg
         self.use_arap = use_arap
+        # Global transformation parameters (scale, rotation, translation)
+        self.scale = torch.nn.Parameter(torch.tensor(1.0, device=self.device))
+        self.rotation = torch.nn.Parameter(torch.zeros(3, device=self.device))  # axis-angle
+        self.translation = torch.nn.Parameter(torch.zeros(3, device=self.device))
         
         # Compute mean codes if encoders are not provided
         if self.shape_encoder is None and self.shape_codes is not None:
@@ -89,8 +96,9 @@ class Reconstructor:
         """Get initial shape and deform codes from encoder or use mean."""
         if  self.shape_encoder is not None and self.deform_encoder is not None:
             voxel = points_to_voxel(points)
-            shape_code = self.shape_encoder(voxel).squeeze(0)  # [code_dim]
-            deform_code = self.deform_encoder(voxel).squeeze(0)  # [code_dim]
+            voxel = torch.tensor(voxel, dtype=torch.float32).unsqueeze(0).to(self.device)
+            shape_code = self.shape_encoder(voxel).squeeze(0).squeeze(0)  # [code_dim]
+            deform_code = self.deform_encoder(voxel).squeeze(0).squeeze(0)  # [code_dim]
         else:
             shape_code = self.shape_codes.mean(dim=0)
             deform_code = self.deform_codes.mean(dim=0)
@@ -144,6 +152,25 @@ class Reconstructor:
         base_points = base_mesh.verts_packed()
         points_registered = self.rigid_to_canonical(verts_normalized, base_points, save_folder=args.save_folder, save_name=mesh_path.split('/')[-1].split('.')[0])
         
+        # 7. Check top/bottom ambiguity - rotate 180° around z-axis and compare chamfer distance
+        with torch.no_grad():
+            # Original chamfer distance
+            chamfer_orig = chamfer_distance(points_registered.unsqueeze(0), base_points.unsqueeze(0))[0]
+            
+            # Rotate 180° around z-axis: negate x and y, keep z
+            points_rotated = points_registered.clone()
+            points_rotated[:, 0] = -points_rotated[:, 0]  # negate x
+            points_rotated[:, 1] = -points_rotated[:, 1]  # negate y
+            
+            # Rotated chamfer distance
+            chamfer_rotated = chamfer_distance(points_rotated.unsqueeze(0), base_points.unsqueeze(0))[0]
+            
+            if chamfer_rotated < chamfer_orig:
+                print(f"Using z-rotated points (chamfer: {chamfer_rotated:.6f} < {chamfer_orig:.6f})")
+                points_registered = points_rotated
+            else:
+                print(f"Using original points (chamfer: {chamfer_orig:.6f} <= {chamfer_rotated:.6f})")
+        
         return {
             'base_mesh': base_mesh,
             'registered_points': points_registered,
@@ -161,6 +188,12 @@ class Reconstructor:
         bone = bone.unsqueeze(0).expand(base_points.shape[0], -1, -1).to(self.device)
         B, N, K = sw.shape
         v0 = base_points.view(-1, 3)
+        # Apply global transformation: scale, rotation, translation
+        v0 = v0 * self.scale
+        # Apply global rotation (axis-angle to rotation matrix)
+        global_rot = transforms.axis_angle_to_matrix(self.rotation)  # (3, 3)
+        v0 = torch.matmul(v0, global_rot.T)  # rotate
+        v0 = v0 + self.translation  # translate
         disp = rts_fw[:, :, :3]
         rot = rts_fw[:, :, 3:]
         rot = transforms.quaternion_to_matrix(rot.view(B * K, 4).contiguous()).view(B, K, 3, 3).contiguous()
@@ -172,7 +205,7 @@ class Reconstructor:
         v = torch.sum(region_score[:, :, None] * per_hd_v, 1)
         return v.view(B, N, 3)
 
-    def reduce_lr(self, optimizer, factor=0.9):
+    def reduce_lr(self, optimizer, factor=0.7):
         """Reduce learning rate."""
         for param_group in optimizer.param_groups:
             param_group['lr'] *= factor
@@ -216,6 +249,12 @@ class Reconstructor:
             deform_code_init: Initial deform code (optional)
             input_mesh: Input mesh to initialize codes from (optional)
         """
+        # Reset global transformation parameters
+        with torch.no_grad():
+            self.scale.fill_(1.0)
+            self.rotation.zero_()
+            self.translation.zero_()
+        
         # Get initial codes
         if shape_code_init is None or deform_code_init is None:
             if input_mesh is not None:
@@ -227,8 +266,13 @@ class Reconstructor:
         shape_code = torch.nn.Parameter(shape_code_init.clone())
         deform_code = torch.nn.Parameter(deform_code_init.clone())
         
-        optimizer_shape = torch.optim.Adam([shape_code], lr=0.01) 
+        optimizer_shape = torch.optim.Adam([shape_code], lr=0.005) 
         optimizer_deform = torch.optim.Adam([deform_code], lr=0.005) 
+        optimizer_transform = torch.optim.Adam([
+            {'params': [self.scale], 'lr': 0.001},
+            {'params': [self.rotation], 'lr': 0.001},
+            {'params': [self.translation], 'lr': 0.001}
+        ])
         
         deform_points = points.to(self.device)
         if deform_points.ndimension() == 2:
@@ -240,13 +284,16 @@ class Reconstructor:
         # Normalize base_points to zero mean
         base_points = raw_to_canonical(base_points.squeeze(0)).unsqueeze(0)
         base_faces = base_mesh.faces_packed().unsqueeze(0).to(self.device)
+        # save init base mesh
         arap_loss = ARAPLoss(base_points, base_faces)
         if self.use_length_reg:
             boundary_edges = self.find_boundary_edges(base_faces.squeeze(0))
             initial_edge_lengths = self.compute_edge_length(base_points.squeeze(0), boundary_edges)
         else:
             initial_edge_lengths = None
-        
+        base_mesh_init = Meshes(verts=base_points, faces=base_faces)
+        IO().save_mesh(base_mesh_init, save_path.replace('_fitted.obj', '_base_init.obj'))
+
         for i in range(epoch):          
             optimizer_shape.zero_grad()
             optimizer_deform.zero_grad()
@@ -260,6 +307,7 @@ class Reconstructor:
                 # Normalize base_points to zero mean
                 base_points = raw_to_canonical(base_points.squeeze(0)).unsqueeze(0)
                 base_faces = base_mesh_new.faces_packed().unsqueeze(0)
+                base_points = base_points 
             
             
             # Forward pass
@@ -293,23 +341,24 @@ class Reconstructor:
             loss_total.backward()
             optimizer_shape.step()
             optimizer_deform.step()
-            if i % 50 == 0:
-                print(f'Epoch {i} loss: {loss_total.item():.6f}, chamfer: {loss_chamfer.item():.6f}, smooth: {loss_laplacian.item():.6f}, edge: {loss_edge.item():.6f}, length: {loss_length.item():.6f},arap: {loss_arap.item():.6f}')
-            if i % (epoch//3) == 0 and epoch !=0:
+            optimizer_transform.step()
+            if i % 100 == 0:
+                rot_angle = torch.norm(self.rotation).item() * 180 / 3.14159  # degrees
+                print(f'Epoch {i} loss: {loss_total.item():.6f}, chamfer: {loss_chamfer.item():.6f}, scale: {self.scale.item():.2f}, rot: {rot_angle:.1f}°, trans: [{self.translation[0].item():.3f},{self.translation[1].item():.3f},{self.translation[2].item():.3f}], smooth: {loss_laplacian.item():.6f}, edge: {loss_edge.item():.6f}, arap: {loss_arap.item():.3f}')
+                IO().save_mesh(new_mesh, save_path) # save fitted mesh
+
+            if i % (epoch//8) == 0 and epoch !=0:
                 self.reduce_lr(optimizer_shape)
                 self.reduce_lr(optimizer_deform)
-    
+                self.reduce_lr(optimizer_transform)
         if save_mesh and save_path is not None:
-            IO().save_mesh(new_mesh, save_path)
-            # Save final base mesh from updated shape_code
-            with torch.no_grad():
-                final_base_mask = latent_to_mask(shape_code.unsqueeze(0), self.shape_decoder, size=256, k=self.k)
-                final_base_mesh = mask2mesh([final_base_mask])
-                IO().save_mesh(final_base_mesh, save_path.replace('.obj', '_base.obj'))
+            IO().save_mesh(new_mesh, save_path) # save fitted mesh
+            base_mesh_final = Meshes(verts=base_points, faces=base_faces, textures=base_mesh.textures)
+            IO().save_mesh(base_mesh_final, save_path.replace('_fitted.obj', '_base.obj'))
             deform_verts = deform_points.squeeze(0)  # [N, 3]
             deform_faces = torch.zeros((0, 3), dtype=torch.long, device=deform_verts.device)  # [0, 3]
             deform_points_mesh = Meshes(verts=[deform_verts], faces=[deform_faces])
-            IO().save_mesh(deform_points_mesh, save_path.replace('_fitted.obj', '_ori.obj'))
+            IO().save_mesh(deform_points_mesh, save_path.replace('_fitted.obj', '_ori.obj')) # save input points
         return loss_chamfer, new_mesh
 
     def fitting_direct(self, base_mesh, deform_points, epoch=601, save_mesh=False, save_path=None):
@@ -318,9 +367,9 @@ class Reconstructor:
         """
         base_points = base_mesh.verts_packed().unsqueeze(0)
         base_faces = base_mesh.faces_packed().unsqueeze(0)
-        # Normalize base_points to zero mean
+        # Normalize base_points to zero mean and unit scale (consistent with neuraleaf_fitting and training)
         base_points = raw_to_canonical(base_points.squeeze(0)).unsqueeze(0)
-        base_points = base_points * 2  # Rescale base points
+        # Note: Removed * 2 to be consistent with neuraleaf_fitting and training code
         shape_code, _ = self.get_initial_codes(base_points)
         deform_points = deform_points.to(self.device)
         if deform_points.ndimension() == 2:
@@ -351,7 +400,7 @@ class Reconstructor:
         # Calculate the epoch threshold for shape-related parameter updates
         
         for i in range(epoch):
-            optimizer_bone.zero_grad()
+            # optimizer_bone.zero_grad()
             optimizer_sw.zero_grad()
             optimizer_T.zero_grad()
             
@@ -379,13 +428,13 @@ class Reconstructor:
             optimizer_T.step()
 
             
-            if i % 50 == 0:
+            if i % 100 == 0:
                 print(f'Epoch {i} loss: {loss_total.item():.6f}, chamfer: {loss_chamfer.item():.6f}, '
                       f'edge: {loss_edge.item():.6f}, smooth: {loss_laplacian.item():.6f}')
             
             if i % 300 == 0:
                 self.reduce_lr(optimizer_sw)
-                self.reduce_lr(optimizer_bone)
+                # self.reduce_lr(optimizer_bone)
                 self.reduce_lr(optimizer_T)
         
         if save_mesh and save_path is not None:
@@ -400,16 +449,15 @@ if __name__ == '__main__':
     parser.add_argument('--save_folder', type=str, default='results/fitting', help='output directory')
     parser.add_argument('--config', type=str, default='scripts/configs/bashshape.yaml', help='config file')
     parser.add_argument('--config_deform', type=str, default='scripts/configs/deform.yaml', help='deform config file')
-    parser.add_argument('--mesh_path', type=str, required=False, default='/mnt/data/cvpr_final/deform_train/17_deform.ply', help='path to input mesh')
+    parser.add_argument('--mesh_path', type=str, required=False, default='/mnt/data/cvpr_final/20251211-test.ply', help='path to input mesh')
     parser.add_argument('--method', type=str, default='neuraleaf', choices=['neuraleaf', 'direct'], 
                         help='fitting method')
     parser.add_argument('--epoch', type=int, default=1000, help='number of epochs')
     parser.add_argument('--use_length_reg', action='store_true', help='use length regularization')
     parser.add_argument('--use_arap', action='store_true', help='use arap loss')
-    parser.add_argument('--shape_checkpoint', type=str, default='checkpoints/baseshape.pth', help='path to shape checkpoint')
+    parser.add_argument('--shape_checkpoint', type=str, default='checkpoints/baseshape_l.pth', help='path to shape checkpoint')
     parser.add_argument('--deform_checkpoint', type=str, default='checkpoints/deform.pth', help='path to deform checkpoint')
-    parser.add_argument('--shape_encoder_checkpoint', type=str, default='checkpoints/shape_encoder.pth', help='path to shape encoder checkpoint')
-    parser.add_argument('--deform_encoder_checkpoint', type=str, default='checkpoints/deform_encoder.pth', help='path to deform encoder checkpoint')
+    parser.add_argument('--encoder_checkpoint', type=str, default='checkpoints/encoder.pth', help='path to encoder checkpoint')
     
     args = parser.parse_args()
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
@@ -440,7 +488,7 @@ if __name__ == '__main__':
     deform_latent_dim = CFG_deform['NBS']['lat_dim']  # Deform code dimension
     shape_latent_dim = CFG['Base']['Z_DIM']  # Shape code dimension
     swpredictor = SWPredictor(num_bones=num_bones, latent_dim=shape_latent_dim).to(device)
-    transpredictor = TransPredictor(num_bones=num_bones, latent_dim=128).to(device)
+    transpredictor = TransPredictor(num_bones=num_bones, latent_dim=deform_latent_dim).to(device)
     checkpoint_deform = torch.load(args.deform_checkpoint, map_location='cpu') # 152 latest_deform_shape_prior
     bone = checkpoint_deform['bone'].to(device)
     deform_codes = checkpoint_deform['deform_codes']['weight']
@@ -453,13 +501,15 @@ if __name__ == '__main__':
     # Initialize encoders (optional)
     shape_encoder = None  # Set to ShapeEncoder instance if available
     deform_encoder = None  # Set to DeformEncoder instance if available
-    if os.path.exists(args.shape_encoder_checkpoint) and os.path.exists(args.deform_encoder_checkpoint):
+    if os.path.exists(args.encoder_checkpoint):
         shape_encoder = ShapeEncoder(code_dim=shape_latent_dim, res=128, output_dim=shape_latent_dim).to(device)
         deform_encoder = ShapeEncoder(code_dim=deform_latent_dim, res=128, output_dim=deform_latent_dim).to(device)
-        shape_encoder.load_state_dict(torch.load(args.shape_encoder_checkpoint, map_location='cpu'))
-        deform_encoder.load_state_dict(torch.load(args.deform_encoder_checkpoint, map_location='cpu'))
+        encoder = torch.load(args.encoder_checkpoint, map_location='cpu')
+        shape_encoder.load_state_dict(encoder['shape_encoder'])
+        deform_encoder.load_state_dict(encoder['deform_encoder'])
         shape_encoder.eval()
         deform_encoder.eval()
+
 
     # Create reconstructor
     reconstructor = Reconstructor(
