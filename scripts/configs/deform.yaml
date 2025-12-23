@@ -1,9 +1,9 @@
 NBS:
   num_bones: 1000
-  lat_dim: 256
+  lat_dim: 128
 
 Deform:
-  Z_DIM: 256
+  Z_DIM: 128
   decoder_hidden_dim: 256
   decoder_out_dim: 3
   decoder_nlayers: 8
@@ -20,20 +20,22 @@ Base:
 
 Trainer:
   batch_size: 1
-  num_epochs: 1001
+  num_epochs: 1000
   vis_interval:  10
   LR_SW: 0.001
-  LR_D: 0.001 # 0.01
+  LR_T: 0.001 # 0.01
   LR_B: 0.05
+  LR_D: 0.001
   epoch_only_shape: -1
   LR_LAT: 0.001
   ckpt_interval: 100
-  lr_decay_interval_lat: 200
+  lr_decay_interval_lat: 100 # 200
   lr_decay_factor_lat: 0.5
   START_TRAIN_AT_IMG_SIZE: 8
   shape_checkpoint: checkpoints/baseshape.pth
   save_result: results/IJCV/deform/
   checkpoint_path: checkpoints/IJCV/deform/
+  pretrained_path: checkpoints/deform.pth
   save_name: deform
   grad_clip: 0.025
   grad_clip_lat: 0.025
@@ -42,14 +44,14 @@ Trainer:
     sdf: 1
     sil: 1
     reg_shape: 0.001
-    shape: 1
-    edge: 1 # 1
+    shape: 10
+    edge: 0.01 # 1
     # area: 0.05
-    smooth: 1
-    normal: 1
-    length: 1
+    smooth: 0.01
     arap: 1
     reg_deform: 0.001
-    bone: 10
     map: 0.01
+    sw_gt: 10.0  # L1 loss weight for GT sw supervision
+    rts_gt: 1.0  # L1 loss weight for GT rts_fw supervision
+    bone_gt: 1.0  # L1 loss weight for GT bone supervision
 
